@@ -4,10 +4,17 @@ local module = {};
 
 local tremove = table.remove
 local tinsert = table.insert
+local sgsub = string.gsub
+local sbyte = string.byte
+local sformat = string.format
+local sfind = string.find
+local ssub = string.sub
 
+---@class xmlItem
 local item = {}
 item.__index = item
 
+-- check is item instance
 function item.isItem(thing)
 	local ty = type(thing)
 	if ty ~= "table" then
@@ -19,6 +26,9 @@ function item.isItem(thing)
 end
 local isItem = item.isItem
 
+---Remove item with index
+---@param index number index of item that you want to remove
+---@return string|nil|xmlItem removed removed item
 function item:remove(index)
 	local this = self[index]
 	if not this then
@@ -26,9 +36,12 @@ function item:remove(index)
 	end
 	this.__parent = nil
 	this.__pindex = nil
-	tremove(self,index)
+	return tremove(self,index)
 end
 
+---Remove item with value (find and remove)
+---@param value string|xmlItem item to remove
+---@return boolean passed
 function item:removeValue(value)
 	local pass,ty = isItem(value)
 	if not (pass or ty == "string") then
@@ -47,6 +60,9 @@ function item:removeValue(value)
 	return false
 end
 
+---Add new item
+---@param index number index of new item
+---@param value string|xmlItem item to add
 function item:insert(index,value)
 	local pass,ty = isItem(value)
 	if not (pass or ty == "string") then
@@ -59,6 +75,9 @@ function item:insert(index,value)
 	end
 end
 
+---Append new item
+---@param value string|xmlItem new item to append
+---@return number index where this item was added
 function item:append(value)
 	local pass,ty = isItem(value)
 	if not (pass or ty == "string") then
@@ -69,8 +88,11 @@ function item:append(value)
 		value.__parent = self
 		value.__pindex = #self
 	end
+	return #self
 end
 
+---Prepend new item
+---@param value string|xmlItem new item to prepend
 function item:prepend(value)
 	local pass,ty = isItem(value)
 	if not (pass or ty == "string") then
@@ -90,6 +112,10 @@ end
 		arg1 string tag: tag of child
 		return: class:item/nil child item , int index
 !autoDoc!]]
+---get child object by using tag
+---@param tag string tag of child
+---@return xmlItem|nil childitem
+---@return number index
 function item:getFirstChildByTag(tag)
 	if type(tag) ~= "string" then
 		error(("[ERROR] Xml.Item : getFirstChildByTag method arg 1 'tag' must be a string, but got %s"):format(type(tag)))
@@ -108,6 +134,10 @@ end
 		arg string tag: tag of children
 		return: table of class:item/nil
 !autoDoc!]]
+---get child objects by using tag
+---@param tag string tag of children
+---@return table children table of children
+---@return number count length of children array
 function item:getChildrenByTag(tag)
 	if type(tag) ~= "string" then
 		error(("[ERROR] Xml.Item : getFirstChildByTag method arg 1 'tag' must be a string, but got %s"):format(type(tag)))
@@ -128,6 +158,8 @@ end
 		i: get parent of item
 		return: item/nil
 !autoDoc!]]
+---get parent of this item
+---@return xmlItem|nil
 function item:getParent()
 	return self.__parent
 end
@@ -138,6 +170,8 @@ end
 		i: get index of item from parent item
 		return: int/nil
 !autoDoc!]]
+---get index in parent object
+---@return number index
 function item:getIndex()
 	return self.__pindex
 end
@@ -147,6 +181,7 @@ end
 	function item:destroy()
 		i: destroy it self and remove from parent item (if is exist)
 !autoDoc!]]
+---destroy it self and remove from parent item (if is exist)
 function item:destroy()
 	local p = self.__parent
 	if p then
@@ -161,7 +196,7 @@ end
 
 --[[!autoDoc!
 @define calss:item
-	i: handler of xml items
+	i: make new handler of xml item
 	string item.tag
 		i: tag of itself, it must be string
 	table/nil item.option
@@ -171,10 +206,15 @@ end
 	function item.new(tag,option,t)
 		i: make new item
 		arg1 string tag: tag of new item, it means <tag></tag>
-		arg2 table/nil: option of new item, it means <a option></a>
+		arg2 table/nil option: option of new item, it means <a option></a>
 		arg3 table/nil t: include child items, you can make empty this
 		return: class:item
 !autoDoc!]]
+---make new handler of xml item
+---@param tag string tag of new item, it means <tag></tag>
+---@param option table|nil of itself, you can make this property to empty with nil
+---@param t table|nil include child items, you can make empty this
+---@return xmlItem
 function item.new(tag,option,t)
 	t = (t == nil and {}) or (type(t) == "table" and t) or {}
 	if type(tag) ~= "string" then
@@ -193,11 +233,8 @@ function item.new(tag,option,t)
 
 	return t
 end
-
 module.item = item
 
-local sgsub = string.gsub
-local schar = string.char
 local function toLuaStr(str)
 	str = sgsub(str,"&#x([%x]+)%;",function(h)
 		return sgsub(tonumber(h,16))
@@ -216,8 +253,6 @@ local function toLuaStr(str)
 end
 module.toLuaStr = toLuaStr
 
-local sbyte = string.byte
-local sformat = string.format
 local function toXmlStr(str)
 	str = sgsub(str,"&","&amp;")
 	str = sgsub(str,"<","&lt;")
@@ -234,8 +269,6 @@ module.toXmlStr = toXmlStr
 
 -- <a option1="test" option2="test2"></a>
 -- => {option1 = "test", option2 = "test2"}
-local sfind = string.find
-local ssub = string.sub
 local optionFind = "\32-([%w-_]+)\32-="
 local function strToOption(str)
 	local option = {};
