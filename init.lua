@@ -9,6 +9,7 @@ local sbyte = string.byte
 local sformat = string.format
 local sfind = string.find
 local ssub = string.sub
+local schar = string.char
 
 ---@class xmlItem
 local item = {}
@@ -235,13 +236,15 @@ function item.new(tag,option,t)
 end
 module.item = item
 
+local function hexStr(h)
+	return schar(tonumber(h,16))
+end
+local function decStr(h)
+	return schar(tonumber(h,10))
+end
 local function toLuaStr(str)
-	str = sgsub(str,"&#x([%x]+)%;",function(h)
-		return sgsub(tonumber(h,16))
-	end)
-	str = sgsub(str,"&#([0-9]+)%;",function(h)
-		return sgsub(tonumber(h,10))
-	end)
+	str = sgsub(str,"&#x([%x]+);",hexStr)
+	str = sgsub(str,"&#([0-9]+);",decStr)
 	str = sgsub(str,"&quot;",'"')
 	str = sgsub(str,"&apos;","'")
 	str = sgsub(str,"&gt;",">")
@@ -253,14 +256,15 @@ local function toLuaStr(str)
 end
 module.toLuaStr = toLuaStr
 
+local function strToHex(c)
+	return sformat("&#x%X;", sbyte(c))
+end
 local function toXmlStr(str)
 	str = sgsub(str,"&","&amp;")
 	str = sgsub(str,"<","&lt;")
 	str = sgsub(str,">","&gt;")
 	str = sgsub(str,"\"","&quot;")
-   	str = sgsub(str,"([^%w%&%;%p%\t%\32])",function (c)
-		return sformat("&#x%X;", sbyte(c))
-	end)
+   	str = sgsub(str,"([^%w%&%;%p%\t%\32])",strToHex)
 	str = sgsub(str,"\n","\\n")
 	str = sgsub(str,"\t","\\t")
 	return str
