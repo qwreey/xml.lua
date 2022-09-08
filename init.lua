@@ -116,7 +116,7 @@ end
 ---get child object by using tag
 ---@param tag string tag of child
 ---@return xmlItem|nil childitem
----@return number index
+---@return number|nil index
 function item:getFirstChildByTag(tag)
 	if type(tag) ~= "string" then
 		error(("[ERROR] Xml.Item : getFirstChildByTag method arg 1 'tag' must be a string, but got %s"):format(type(tag)))
