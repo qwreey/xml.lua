@@ -306,7 +306,7 @@ end
 module.optionToStr = optionToStr
 
 local holderTag = "myXML_Main"
-local tagFind = "<([%/%?!]?)\32-([%w:%-_]+)(.-)([%/%?!]?)>"
+local tagFind = "<([%/%?!]?)[\32\t\n\r]-([%w:%-_]+)(.-)([%/%?!]?)>"
 function module.xmlToItem(xml)
 	local main = item.new(holderTag)
 	local stack = {}
