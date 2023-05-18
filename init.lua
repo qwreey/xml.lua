@@ -5,6 +5,10 @@ local module = {};
 local tremove = table.remove
 local tinsert = table.insert
 local sgsub = string.gsub
+local sgmatch = string.gmatch
+local smatch = string.match
+local srep = string.rep
+local tconcat = table.concat
 local sbyte = string.byte
 local sformat = string.format
 local sfind = string.find
@@ -144,9 +148,9 @@ function item:getChildrenByTag(tag)
 		error(("[ERROR] Xml.Item : getFirstChildByTag method arg 1 'tag' must be a string, but got %s"):format(type(tag)))
 	end
 	local t,c = {},0
-	for i,v in ipairs(self) do
+	for _,v in ipairs(self) do
 		if type(v) == "table" and v.tag == tag then
-			t[i] = v
+			tinsert(t,v)
 			c = c + 1
 		end
 	end
@@ -351,11 +355,11 @@ local function itemToXml(thing)
 	local pass,ty = isItem(thing)
 	if not pass then
 		if ty == "table" then
-			local str = ""
+			local str = {}
 			for _,v in ipairs(thing) do
-				str = str .. itemToXml(v) .. " "
+                tinsert(str,itemToXml(v))
 			end
-			return ssub(str,1,-2)
+			return tconcat(str," ")
 		end
 		return thing
 	end
@@ -373,11 +377,388 @@ local function itemToXml(thing)
 end
 
 function module.itemToXml(nitem)
-	local pass,ty = isItem(nitem);
+	local pass,ty = isItem(nitem)
 	if not (pass or ty == "table") then
 		error(("[ERROR] Xml.itemToXml : arg 1 'nitem' must be a table or an item, but got %s"):format(ty))
 	end
 	return itemToXml(nitem)
+end
+
+local selectorParser = {} do
+	module.selectorParser = selectorParser
+    local opRegex = {}
+    local opNames = {}
+
+    local spec = true
+
+	-- End of selector string
+	local OP_EOF = #opNames+1
+    tinsert(opRegex,"^[ \n\t]*$")
+    tinsert(opNames,"OP_EOF")
+
+    -- Property selector open and close
+    local OP_PROPERTY_OPEN = #opNames+1
+    tinsert(opRegex,"^%[[ \t\n]*")
+    tinsert(opNames,"OP_PROPERTY_OPEN")
+    local OP_PROPERTY_CLOSE = #opNames+1
+    tinsert(opRegex,"^[ \t\n]*%]")
+    tinsert(opNames,"OP_PROPERTY_CLOSE")
+
+    -- Property selector matcher
+    local OP_PROPERTY_SELECTOR_EQUAL = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*=[ \t\n]*]])
+    tinsert(opNames,"OP_PROPERTY_SELECTOR_EQUAL")
+    local OP_PROPERTY_SELECTOR_WORD = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*~=[ \t\n]*]])
+    tinsert(opNames,"OP_PROPERTY_SELECTOR_WORD")
+    local OP_PROPERTY_SELECTOR_DASH = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*|=[ \t\n]*]])
+    tinsert(opNames,"OP_PROPERTY_SELECTOR_DASH")
+    local OP_PROPERTY_SELECTOR_BEGIN = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*%^=[ \t\n]*]])
+    tinsert(opNames,"OP_PROPERTY_SELECTOR_BEGIN")
+    local OP_PROPERTY_SELECTOR_END = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*$=[ \t\n]*]])
+    tinsert(opNames,"OP_PROPERTY_SELECTOR_END")
+    local OP_PROPERTY_SELECTOR_CONTAIN = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*%*=[ \t\n]*]])
+    tinsert(opNames,"OP_PROPERTY_SELECTOR_CONTAIN")
+
+    -- Strings
+    local OP_STRING_DOUBLE_QUOTE = #opNames+1
+    tinsert(opRegex,[[^"]])
+    tinsert(opNames,"OP_STRING_DOUBLE_QUOTE")
+    local OP_STRING_SINGLE_QUOTE = #opNames+1
+    tinsert(opRegex,[[^']])
+    tinsert(opNames,"OP_STRING_SINGLE_QUOTE")
+
+    -- Abstract selector
+    local OP_ABSTRACT_EMPTY = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*:empty]])
+    tinsert(opNames,"OP_ABSTRACT_EMPTY")
+    local OP_ABSTRACT_FIRST_CHILD = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*:first%-child]])
+    tinsert(opNames,"OP_ABSTRACT_FIRST_CHILD")
+    local OP_ABSTRACT_FIRST_OF_TYPE = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*:first%-of%-type]])
+    tinsert(opNames,"OP_ABSTRACT_FIRST_OF_TYPE")
+    local OP_ABSTRACT_LAST_CHILD = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*:last%-child]])
+    tinsert(opNames,"OP_ABSTRACT_LAST_CHILD")
+    local OP_ABSTRACT_LAST_OF_TYPE = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*:last%-of%-type]])
+    tinsert(opNames,"OP_ABSTRACT_LAST_OF_TYPE")
+    local OP_ABSTRACT_NOT = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*:not]])
+    tinsert(opNames,"OP_ABSTRACT_NOT")
+    local OP_ABSTRACT_NTH_CHILD = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*:nth%-child]])
+    tinsert(opNames,"OP_ABSTRACT_NTH_CHILD")
+    local OP_ABSTRACT_NTH_LAST_CHILD = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*:nth%-last%-child]])
+    tinsert(opNames,"OP_ABSTRACT_NTH_LAST_CHILD")
+    local OP_ABSTRACT_NTH_LAST_OF_TYPE = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*:nth%-last%-of%-type]])
+    tinsert(opNames,"OP_ABSTRACT_NTH_LAST_OF_TYPE")
+    local OP_ABSTRACT_NTH_OF_TYPE = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*:nth%-of%-type]])
+    tinsert(opNames,"OP_ABSTRACT_NTH_OF_TYPE")
+    local OP_ABSTRACT_OLNY_OF_TYPE = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*:only%-of%-type]])
+    tinsert(opNames,"OP_ABSTRACT_OLNY_OF_TYPE")
+    local OP_ABSTRACT_ONLY_CHILD = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*:only%-child]])
+    tinsert(opNames,"OP_ABSTRACT_ONLY_CHILD")
+	-- TODO: firefox's abstract selector such as :is()
+	-- TODO: :is() is useful. see :is(h1,h2,h3):not(.colored)
+
+    -- Abstract option open and close
+    local OP_ABSTRACT_OPTION_OPEN = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*%(]])
+    tinsert(opNames,"OP_ABSTRACT_OPTION_OPEN")
+    local OP_ABSTRACT_OPTION_CLOSE = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*%)]])
+    tinsert(opNames,"OP_ABSTRACT_OPTION_CLOSE")
+
+    -- Escape
+    local OP_ESCAPE = #opNames+1
+    tinsert(opRegex,[[^\]])
+    tinsert(opNames,"OP_ESCAPE")
+
+    -- Access
+    local OP_ACCESS_DIRECT_CHILD = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*>[ \t\n]*]])
+    tinsert(opNames,"OP_ACCESS_DIRECT_CHILD")
+    local OP_ACCESS_SIBLING = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*%+[ \t\n]*]])
+    tinsert(opNames,"OP_ACCESS_SIBLING")
+    local OP_ACCESS_AFTER = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*~[ \t\n]*]])
+    tinsert(opNames,"OP_ACCESS_AFTER")
+
+    -- More
+    local OP_MORE = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]*,[ \t\n]*]])
+    tinsert(opNames,"OP_MORE")
+
+    -- DFS
+    local OP_ACCESS_DESCENDANT = #opNames+1
+    tinsert(opRegex,[[^[ \t\n]+]])
+    tinsert(opNames,"OP_ACCESS_DESCENDANT")
+
+    -- Tag Name
+    local OP_TAG = #opNames+1
+    tinsert(opRegex,"^([%-_%w]+)")
+    tinsert(opNames,"OP_TAG")
+
+    -- class
+    local OP_CLASS = #opNames+1
+    tinsert(opRegex,"^%.([%-_%w]+)")
+    tinsert(opNames,"OP_CLASS")
+
+    -- id
+    local OP_ID = #opNames+1
+    tinsert(opRegex,"^#([%-_%w]+)")
+    tinsert(opNames,"OP_ID")
+
+    -- All
+    local OP_WILDCARD = #opNames+1
+    tinsert(opRegex,"^%*")
+    tinsert(opNames,"OP_WILDCARD")
+
+	-- utf8 char
+	local OP_UTFCHAR = #opNames+1
+	tinsert(opRegex,"([%z\001-\194-\244][\128-\191]*)")
+	tinsert(opNames,"OP_UTFCHAR")
+
+    local nthDigit = {
+        [0] = "%dth",
+        "%dst", -- 1st 11st
+        "%dnd", -- 2nd 12nd
+        "%drd", -- 3rd 13rd
+        "%dth","%dth","%dth","%dth","%dth","%dth",
+    }
+    local function formatNTH(n)
+        return sformat(nthDigit[n%10],n)
+    end
+    local stringEscapes = {
+        ["'"] = "'",
+        ['"'] = '"',
+        ["n"] = "\n",
+        ["r"] = "\r",
+        ["t"] = "\t"
+        -- todo: check more escapes
+    }
+
+    function selectorParser.parseString(str,init,initChar)
+        local pos = init+1
+        local buffer = {}
+        while true do
+            local start,_,char = sfind(str,"([\\'\"])",pos)
+            if not start then
+                error(("[SelectorParser.ParseString: buffer exhausted] String is opened at %s char (%s). But String is not closed."):format(formatNTH(init),initChar))
+            end
+
+            -- insert last string
+            tinsert(buffer,ssub(str,pos,start-1))
+            pos = start + 1
+
+            if char == initChar then
+                -- closed
+                break
+            elseif char == "\\" then
+                -- escape
+                local newChar = stringEscapes[ssub(str,pos,pos)]
+                if not newChar then
+                    error(("[SelectorParser.ParseString: unknown escape] Escape '\\%s', which is %s char is not defined."):format(ssub(str,pos,pos),formatNTH(init)))
+                end
+                tinsert(buffer,newChar)
+                pos = pos + 1
+            else
+                tinsert(buffer,char)
+            end
+        end
+        return tconcat(buffer),pos
+    end
+    if spec then
+        local ok,result
+
+        ok,result = pcall(selectorParser.parseString,"?  'Test String'  ?",4,"'")
+        assert(ok and result == "Test String",sformat("SPEC: not match with expection (result: '%s')",result))
+
+        ok,result = pcall(selectorParser.parseString,"?  'Test String  ?",4,"'")
+        assert(not ok,sformat("SPEC: not match with expection (result: '%s')",result))
+
+        ok,result = pcall(selectorParser.parseString,"?  'Test\\nString'  ?",4,"'")
+        assert(ok and result == "Test\nString",sformat("SPEC: not match with expection (result: '%s')",result))
+    end
+
+	local function buildErrorTrace(str,tokenStart,tokenEnd,opcode)
+		return sformat("\n[ErrorTrace] Invalid token started at %s char.\ntoken: '%s' (OPcode: %s)\n%s\n%s%s",
+			formatNTH(tokenStart),
+			ssub(str,tokenStart,tokenEnd),
+			opNames[opcode] or "Invalid",
+			str,
+			srep("\32",tokenStart-1),
+			srep("^",tokenEnd-tokenStart+1)
+		)
+	end
+
+    -- Check if objects belong to negative group
+    -- function selectorParser.checkNot(notDescription)
+
+    -- isSubset is not field. if isSubset is true, parse function will return when reachs to closer ")"
+    function selectorParser.parse(str,init,isSubset)
+		local pos = init or 1
+		local startAt,endAt,matched,op
+		local segment = {}
+		local selector = {segment}
+		local parsed = {selector}
+		local accessMode -- + > ~ and space
+		while true do
+			-- get current token
+			for index,regex in ipairs(opRegex) do
+				startAt,endAt,matched = sfind(str,regex,pos)
+				op = index
+				if startAt then break end
+			end
+			if not startAt then break end
+
+			-- End of file (selector)
+			if op == OP_EOF then
+				break
+
+			-- Access mode
+			-- + ~ > space
+			elseif
+			op == OP_ACCESS_SIBLING or -- +
+			op == OP_ACCESS_DIRECT_CHILD or -- >
+			op == OP_ACCESS_DESCENDANT or -- space
+			op == OP_ACCESS_AFTER then -- ~
+				if #selector == 1 and (not segment.condition) then
+					if op == OP_ACCESS_DESCENDANT then
+						-- ignore heading spaces
+					else
+						error("[SelectorParser.parse: accessMode got before the first condition] accessMode cannot be inserted on the front. Possible cause: accessMode is on front (example > body)"..buildErrorTrace(str,startAt,endAt,op))
+					end
+				else
+					if accessMode then
+						error("[SelectorParser.parse: unused accessMode] Last accessMode is not consumed. Possible cause: Repeated accessMode token (example: body > > div)"..buildErrorTrace(str,startAt,endAt,op))
+					end
+					accessMode = op
+					segment = { accessMode = op }
+					tinsert(selector,segment)
+				end
+				pos = endAt+1
+
+			-- More
+			-- ,
+			elseif op == OP_MORE then
+				if not segment.condition then
+					error("[SelectorParser.parse: Empty last segment condition] Last segment's condition is empty. Possible cause: more token(,) immediately follows accessMode (example: body > ,)"..buildErrorTrace(str,startAt,endAt,op))
+				end
+
+				segment = {}
+				selector = {segment}
+				tinsert(parsed,selector)
+				pos = endAt+1
+
+			-- Class
+			-- .a
+			elseif op == OP_CLASS then
+				local condition = segment.condition
+				if not condition then
+					condition = {}
+					segment.condition = condition
+				end
+				tinsert(condition,{type = "class", value = matched})
+				pos = endAt+1
+
+			-- tag
+			-- body
+			elseif op == OP_TAG then
+				local condition = segment.condition
+				if not condition then
+					condition = {}
+					segment.condition = condition
+				end
+				local last = condition[#condition]
+				-- if last and last.type == "tag" then
+				-- This is little hacky, if got '.wow가가wew' wew will inserted at segment which has 'class' type
+				if last then
+					last.value = last.value .. matched -- concat more after utf8. (e: a가나다b)
+				else
+					tinsert(condition,{type = "tag", value = matched})
+				end
+				pos = endAt+1
+
+			-- id
+			-- #a
+			elseif op == OP_ID then
+				local condition = segment.condition
+				if not condition then
+					condition = {}
+					segment.condition = condition
+				end
+				tinsert(condition,{type = "id", value = matched})
+				pos = endAt+1
+
+			-- Some unicode character
+			elseif op == OP_UTFCHAR then
+				local condition = segment.condition
+				if not condition then
+					-- create new condition
+					segment.condition = {{type = "tag", value = matched}}
+				else
+					-- concat to last condition
+					local last = condition[#condition]
+					last.value = last.value .. matched
+				end
+				pos = endAt+1
+
+			-- escape (not in string)
+			elseif op == OP_ESCAPE then
+				-- append on last condition and search more characters
+				-- local condition = segment.condition
+				-- if not condition then
+
+				-- end
+				-- "[%-_%w]+"
+			end
+		end
+		return parsed
+    end
+
+	p(selectorParser.parse("wow#working.wowowow와와wow > wow"))
+
+
+    -- function selectorParser.testParse(str)
+    --     local results,position = {},1
+    --     local mode_property = false
+    --     local mode_option = false
+    --     local buffer = {}
+
+    --     while true do
+    --         if mode_string then
+
+    --         end
+
+    --         for op,regex in ipairs(opRegex) do
+    --             sfind(str,regex,)
+    --         end
+    --     end
+    --     return results
+    -- end
+    -- -- { condition: {} }
+
+    -- function selectorParser:getToken(at)
+
+    -- end
+
+    -- local function parseSelector(selector)
+
+    -- end
+
 end
 
 return module
