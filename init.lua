@@ -388,6 +388,7 @@ local selectorParser = {} do
 	module.selectorParser = selectorParser
     local opRegex = {}
     local opNames = {}
+	local accessNames = {}
 
     local spec = true
 
@@ -398,31 +399,33 @@ local selectorParser = {} do
 
     -- Property selector open and close
     local OP_PROPERTY_OPEN = #opNames+1
-    tinsert(opRegex,"^%[[ \t\n]*")
+	local REG_PROPERTY_OPEN = "^%[[ \t\n]*"
+    tinsert(opRegex,REG_PROPERTY_OPEN)
     tinsert(opNames,"OP_PROPERTY_OPEN")
     local OP_PROPERTY_CLOSE = #opNames+1
-    tinsert(opRegex,"^[ \t\n]*%]")
+	local REG_PROPERTY_CLOSE = "^[ \t\n]*%]"
+    tinsert(opRegex,REG_PROPERTY_CLOSE)
     tinsert(opNames,"OP_PROPERTY_CLOSE")
 
     -- Property selector matcher
-    local OP_PROPERTY_SELECTOR_EQUAL = #opNames+1
+    local OP_PROPERTY_CONDITION_EQUAL = #opNames+1
     tinsert(opRegex,[[^[ \t\n]*=[ \t\n]*]])
-    tinsert(opNames,"OP_PROPERTY_SELECTOR_EQUAL")
-    local OP_PROPERTY_SELECTOR_WORD = #opNames+1
+    tinsert(opNames,"OP_PROPERTY_CONDITION_EQUAL")
+    local OP_PROPERTY_CONDITION_WORD = #opNames+1
     tinsert(opRegex,[[^[ \t\n]*~=[ \t\n]*]])
-    tinsert(opNames,"OP_PROPERTY_SELECTOR_WORD")
-    local OP_PROPERTY_SELECTOR_DASH = #opNames+1
+    tinsert(opNames,"OP_PROPERTY_CONDITION_WORD")
+    local OP_PROPERTY_CONDITION_DASH = #opNames+1
     tinsert(opRegex,[[^[ \t\n]*|=[ \t\n]*]])
-    tinsert(opNames,"OP_PROPERTY_SELECTOR_DASH")
-    local OP_PROPERTY_SELECTOR_BEGIN = #opNames+1
+    tinsert(opNames,"OP_PROPERTY_CONDITION_DASH")
+    local OP_PROPERTY_CONDITION_BEGIN = #opNames+1
     tinsert(opRegex,[[^[ \t\n]*%^=[ \t\n]*]])
-    tinsert(opNames,"OP_PROPERTY_SELECTOR_BEGIN")
-    local OP_PROPERTY_SELECTOR_END = #opNames+1
+    tinsert(opNames,"OP_PROPERTY_CONDITION_BEGIN")
+    local OP_PROPERTY_CONDITION_END = #opNames+1
     tinsert(opRegex,[[^[ \t\n]*$=[ \t\n]*]])
-    tinsert(opNames,"OP_PROPERTY_SELECTOR_END")
-    local OP_PROPERTY_SELECTOR_CONTAIN = #opNames+1
+    tinsert(opNames,"OP_PROPERTY_CONDITION_END")
+    local OP_PROPERTY_CONDITION_CONTAIN = #opNames+1
     tinsert(opRegex,[[^[ \t\n]*%*=[ \t\n]*]])
-    tinsert(opNames,"OP_PROPERTY_SELECTOR_CONTAIN")
+    tinsert(opNames,"OP_PROPERTY_CONDITION_CONTAIN")
 
     -- Strings
     local OP_STRING_DOUBLE_QUOTE = #opNames+1
@@ -487,13 +490,19 @@ local selectorParser = {} do
 
     -- Access
     local OP_ACCESS_DIRECT_CHILD = #opNames+1
-    tinsert(opRegex,[[^[ \t\n]*>[ \t\n]*]])
+	local REG_ACCESS_DIRECT_CHILD = [[^[ \t\n]*>[ \t\n]*]]
+	accessNames[OP_ACCESS_DIRECT_CHILD] = "DIRECT_CHILD"
+    tinsert(opRegex,REG_ACCESS_DIRECT_CHILD)
     tinsert(opNames,"OP_ACCESS_DIRECT_CHILD")
     local OP_ACCESS_SIBLING = #opNames+1
-    tinsert(opRegex,[[^[ \t\n]*%+[ \t\n]*]])
+	local REG_ACCESS_SIBLING = [[^[ \t\n]*%+[ \t\n]*]]
+	accessNames[OP_ACCESS_SIBLING] = "SIBLING"
+    tinsert(opRegex,REG_ACCESS_SIBLING)
     tinsert(opNames,"OP_ACCESS_SIBLING")
     local OP_ACCESS_AFTER = #opNames+1
-    tinsert(opRegex,[[^[ \t\n]*~[ \t\n]*]])
+	local REG_ACCESS_AFTER = [[^[ \t\n]*~[ \t\n]*]]
+	accessNames[OP_ACCESS_AFTER] = "AFTER"
+    tinsert(opRegex,REG_ACCESS_AFTER)
     tinsert(opNames,"OP_ACCESS_AFTER")
 
     -- More
@@ -503,6 +512,7 @@ local selectorParser = {} do
 
     -- DFS
     local OP_ACCESS_DESCENDANT = #opNames+1
+	accessNames[OP_ACCESS_DESCENDANT] = "DESCENDANT"
     tinsert(opRegex,[[^[ \t\n]+]])
     tinsert(opNames,"OP_ACCESS_DESCENDANT")
 
@@ -528,8 +538,28 @@ local selectorParser = {} do
 
 	-- utf8 char
 	local OP_UTFCHAR = #opNames+1
-	tinsert(opRegex,"([%z\001-\194-\244][\128-\191]*)")
+	tinsert(opRegex,"("..utf8.charpattern..")")
 	tinsert(opNames,"OP_UTFCHAR")
+
+	-- condition types
+	local conditionTypes = {}
+	local CONDITION_CLASS = #conditionTypes+1
+	tinsert(conditionTypes,"CLASS")
+	local CONDITION_ID = #conditionTypes+1
+	tinsert(conditionTypes,"ID")
+	local CONDITION_TAG = #conditionTypes+1
+	tinsert(conditionTypes,"TAG")
+	local CONDITION_WILDCARD = #conditionTypes+1
+	tinsert(conditionTypes,"WILDCARD")
+	local CONDITION_PROPERTY = #conditionTypes+1
+	tinsert(conditionTypes,"PROPERTY")
+
+	-- indexes
+	local INDEX_CONDITION_TYPE = 1
+	local INDEX_CONDITION_VALUE = 2
+	local INDEX_CONDITION_OPTION = 3
+	local INDEX_SEGMENT_CONDITION = 1
+	local INDEX_SEGMENT_ACCESSMODE = 2
 
     local nthDigit = {
         [0] = "%dth",
@@ -604,17 +634,37 @@ local selectorParser = {} do
 		)
 	end
 
+	local function prettyParsed(parsed)
+		local buffer = {"Query {\n"}
+		for selectorIndex,selector in ipairs(parsed) do
+			tinsert(buffer,sformat("  Selector #%d {\n",selectorIndex))
+			for segmentIndex,segment in ipairs(selector) do
+				tinsert(buffer,sformat("    Segment #%d: AccessMode = %s {\n",segmentIndex,accessNames[segment[INDEX_SEGMENT_ACCESSMODE]] or "NONE"))
+				for conditionIndex,condition in ipairs(segment[INDEX_SEGMENT_CONDITION]) do
+					if condition[INDEX_CONDITION_OPTION] then
+						tinsert(buffer,sformat("      Condition #%d: Type = %s {\n        Value = '%s'\n        Option = %s\n}\n",conditionIndex,conditionTypes[condition[INDEX_CONDITION_TYPE]],condition[INDEX_CONDITION_VALUE],condition[INDEX_CONDITION_OPTION]))
+					else
+						tinsert(buffer,sformat("      Condition #%d: Type = %s '%s'\n",conditionIndex,conditionTypes[condition[INDEX_CONDITION_TYPE]],condition[INDEX_CONDITION_VALUE]))
+					end
+				end
+				tinsert(buffer,"    };\n")
+			end
+			tinsert(buffer,"  };\n")
+		end
+		tinsert(buffer,"};")
+		return tconcat(buffer)
+	end
+
     -- Check if objects belong to negative group
     -- function selectorParser.checkNot(notDescription)
-
     -- isSubset is not field. if isSubset is true, parse function will return when reachs to closer ")"
     function selectorParser.parse(str,init,isSubset)
 		local pos = init or 1
+		local lastPos
 		local startAt,endAt,matched,op
 		local segment = {}
 		local selector = {segment}
 		local parsed = {selector}
-		local accessMode -- + > ~ and space
 		while true do
 			-- get current token
 			for index,regex in ipairs(opRegex) do
@@ -635,18 +685,17 @@ local selectorParser = {} do
 			op == OP_ACCESS_DIRECT_CHILD or -- >
 			op == OP_ACCESS_DESCENDANT or -- space
 			op == OP_ACCESS_AFTER then -- ~
-				if #selector == 1 and (not segment.condition) then
+				if #selector == 1 and (not segment[INDEX_SEGMENT_CONDITION]) then
 					if op == OP_ACCESS_DESCENDANT then
 						-- ignore heading spaces
 					else
-						error("[SelectorParser.parse: accessMode got before the first condition] accessMode cannot be inserted on the front. Possible cause: accessMode is on front (example > body)"..buildErrorTrace(str,startAt,endAt,op))
+						error("[SelectorParser.parse: accessMode got before the first condition] accessMode cannot be inserted on the front. Possible cause: accessMode is on front (example: > body)"..buildErrorTrace(str,startAt,endAt,op))
 					end
 				else
-					if accessMode then
+					if not segment[INDEX_SEGMENT_CONDITION] then
 						error("[SelectorParser.parse: unused accessMode] Last accessMode is not consumed. Possible cause: Repeated accessMode token (example: body > > div)"..buildErrorTrace(str,startAt,endAt,op))
 					end
-					accessMode = op
-					segment = { accessMode = op }
+					segment = { [INDEX_SEGMENT_ACCESSMODE] = op }
 					tinsert(selector,segment)
 				end
 				pos = endAt+1
@@ -654,7 +703,7 @@ local selectorParser = {} do
 			-- More
 			-- ,
 			elseif op == OP_MORE then
-				if not segment.condition then
+				if not segment[INDEX_SEGMENT_CONDITION] then
 					error("[SelectorParser.parse: Empty last segment condition] Last segment's condition is empty. Possible cause: more token(,) immediately follows accessMode (example: body > ,)"..buildErrorTrace(str,startAt,endAt,op))
 				end
 
@@ -663,73 +712,110 @@ local selectorParser = {} do
 				tinsert(parsed,selector)
 				pos = endAt+1
 
+			-- Property
+			-- [label=...]
+			elseif op == OP_PROPERTY_OPEN then
+
+			elseif op == OP_PROPERTY_CLOSE then
+				error("[SelectorParser.parse: unexpected property bracket close] Got unexpected property bracket close. Possible cause: Repeated bracket close or invalid bracket close (example: [label]])"..buildErrorTrace(str,startAt,endAt,op))
+			elseif
+			op == OP_PROPERTY_CONDITION_BEGIN or
+			op == OP_PROPERTY_CONDITION_CONTAIN or
+			op == OP_PROPERTY_CONDITION_DASH or
+			op == OP_PROPERTY_CONDITION_END or
+			op == OP_PROPERTY_CONDITION_EQUAL or
+			op == OP_PROPERTY_CONDITION_WORD then
+				error("[SelectorParser.parse: unexpected property condition] Condition statement cannot be used outside of the property bracket. Possible cause: Condition statement in invalid position (example: ~=[label])"..buildErrorTrace(str,startAt,endAt,op))
+
 			-- Class
 			-- .a
 			elseif op == OP_CLASS then
-				local condition = segment.condition
+				local condition = segment[INDEX_SEGMENT_CONDITION]
 				if not condition then
 					condition = {}
-					segment.condition = condition
+					segment[INDEX_SEGMENT_CONDITION] = condition
 				end
-				tinsert(condition,{type = "class", value = matched})
+				tinsert(condition,{[INDEX_CONDITION_TYPE] = CONDITION_CLASS, [INDEX_CONDITION_VALUE] = matched})
 				pos = endAt+1
 
 			-- tag
 			-- body
 			elseif op == OP_TAG then
-				local condition = segment.condition
+				local condition = segment[INDEX_SEGMENT_CONDITION]
 				if not condition then
 					condition = {}
-					segment.condition = condition
+					segment[INDEX_SEGMENT_CONDITION] = condition
 				end
 				local last = condition[#condition]
 				-- if last and last.type == "tag" then
 				-- This is little hacky, if got '.wow가가wew' wew will inserted at segment which has 'class' type
 				if last then
-					last.value = last.value .. matched -- concat more after utf8. (e: a가나다b)
+					last[INDEX_CONDITION_VALUE] = last[INDEX_CONDITION_VALUE] .. matched -- concat more after utf8. (e: a가나다b)
 				else
-					tinsert(condition,{type = "tag", value = matched})
+					tinsert(condition,{[INDEX_CONDITION_TYPE] = CONDITION_TAG, [INDEX_CONDITION_VALUE] = matched})
 				end
 				pos = endAt+1
 
 			-- id
 			-- #a
 			elseif op == OP_ID then
-				local condition = segment.condition
+				local condition = segment[INDEX_SEGMENT_CONDITION]
 				if not condition then
 					condition = {}
-					segment.condition = condition
+					segment[INDEX_SEGMENT_CONDITION] = condition
 				end
-				tinsert(condition,{type = "id", value = matched})
+				tinsert(condition,{[INDEX_CONDITION_TYPE] = CONDITION_ID, [INDEX_CONDITION_VALUE] = matched})
+				pos = endAt+1
+
+			elseif op == OP_WILDCARD then
+				local condition = segment[INDEX_SEGMENT_CONDITION]
+				if not condition then
+					condition = {}
+					segment[INDEX_SEGMENT_CONDITION] = condition
+				end
+				tinsert(condition,{[INDEX_CONDITION_TYPE] = CONDITION_WILDCARD})
 				pos = endAt+1
 
 			-- Some unicode character
 			elseif op == OP_UTFCHAR then
-				local condition = segment.condition
-				if not condition then
-					-- create new condition
-					segment.condition = {{type = "tag", value = matched}}
-				else
+				local condition = segment[INDEX_SEGMENT_CONDITION]
+				if condition then
 					-- concat to last condition
 					local last = condition[#condition]
-					last.value = last.value .. matched
+					last[INDEX_CONDITION_VALUE] = last[INDEX_CONDITION_VALUE] .. matched
+				else
+					-- create new condition (by type=tag)
+					segment[INDEX_SEGMENT_CONDITION] = {{[INDEX_CONDITION_TYPE] = CONDITION_TAG, [INDEX_CONDITION_VALUE] = matched}}
 				end
 				pos = endAt+1
 
 			-- escape (not in string)
+			-- consume next char
+			-- TODO: help...
 			elseif op == OP_ESCAPE then
 				-- append on last condition and search more characters
-				-- local condition = segment.condition
+				-- local condition = segment[INDEX_SEGMENT_CONDITION]
 				-- if not condition then
 
 				-- end
 				-- "[%-_%w]+"
+				-- stringEscapes
 			end
+
+			if lastPos == pos then
+				error(sformat("[SelectorParser.parse: stuck in an infinite loop] The value of pos is not being updated for unknown reasons. This may be a bug in the library implementation. Please write a bug report about:\nDEBUG:\nstr: %s\ninit: %s\npos: %s\nisSubset: %s",tostring(str),tostring(init),tostring(pos),tostring(isSubset)))
+			end
+			lastPos = pos
 		end
 		return parsed
     end
 
-	p(selectorParser.parse("wow#working.wowowow와와wow > wow"))
+	p((selectorParser.parse("와wow와.aㄷ > b")))
+	print(prettyParsed(selectorParser.parse("와wow와.aㄷ > b")))
+	-- p(selectorParser.parse("wow#working.wowo > a > wow#trash.string"))
+	-- p(selectorParser.parse("wow#working.wowo > > wow#trash.string"))
+	-- p(selectorParser.parse("  wow#working.wowo > wow#trash.string"))
+	-- p(selectorParser.parse(">wow#working.wowo > wow#trash.string"))
 
 
     -- function selectorParser.testParse(str)
