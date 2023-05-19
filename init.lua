@@ -665,6 +665,7 @@ local selectorParser = {} do
 		local segment = {}
 		local selector = {segment}
 		local parsed = {selector}
+		local buflen = #str
 		while true do
 			-- get current token
 			for index,regex in ipairs(opRegex) do
@@ -804,6 +805,11 @@ local selectorParser = {} do
 
 			if lastPos == pos then
 				error(sformat("[SelectorParser.parse: stuck in an infinite loop] The value of pos is not being updated for unknown reasons. This may be a bug in the library implementation. Please write a bug report about:\nDEBUG:\nstr: %s\ninit: %s\npos: %s\nisSubset: %s",tostring(str),tostring(init),tostring(pos),tostring(isSubset)))
+			elseif pos >= buflen then
+				if not segment[INDEX_SEGMENT_CONDITION] then
+					error(sformat("[SelectorParser.parse: buffer exhausted] Buffer exhausted before got a condition. Possible cause: Got More/Access operation at end of buffer (example: a > / a , )"))
+				end
+				break
 			end
 			lastPos = pos
 		end
