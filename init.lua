@@ -1,11 +1,15 @@
 local module = {};
 
--- TODO: 코맨트 무시 필요, !CDATA 읽기 수정 필요
+-- TODO: CDATA
+-- TODO: Ignore comment
+-- TODO: Read document type
+-- TODO: querySelector
+-- TODO: html items
+-- TODO: Rewrite xml parser
 
 local tremove = table.remove
 local tinsert = table.insert
 local sgsub = string.gsub
-local sgmatch = string.gmatch
 local smatch = string.match
 local srep = string.rep
 local tconcat = table.concat
@@ -59,6 +63,40 @@ local utility = {} do
 		["r"] = "\r",
 		["t"] = "\t",
 	}
+
+	local function hexStr(h)
+		return schar(tonumber(h,16))
+	end
+	local function decStr(h)
+		return schar(tonumber(h,10))
+	end
+	function utility.toLuaStr(str)
+		str = sgsub(str,"&#x([%x]+);",hexStr)
+		str = sgsub(str,"&#([0-9]+);",decStr)
+		str = sgsub(str,"&quot;",'"')
+		str = sgsub(str,"&apos;","'")
+		str = sgsub(str,"&gt;",">")
+		str = sgsub(str,"&lt;","<")
+		str = sgsub(str,"&amp;","&")
+		str = sgsub(str,"\\n","\n")
+		str = sgsub(str,"\\t","\t")
+		return str
+	end
+
+
+	local function strToHex(c)
+		return sformat("&#x%X;", sbyte(c))
+	end
+	function utility.toXmlStr(str)
+		str = sgsub(str,"&","&amp;")
+		str = sgsub(str,"<","&lt;")
+		str = sgsub(str,">","&gt;")
+		str = sgsub(str,"\"","&quot;")
+		str = sgsub(str,"([^%w%&%;%p%\t%\32])",strToHex)
+		str = sgsub(str,"\n","\\n")
+		str = sgsub(str,"\t","\\t")
+		return str
+	end
 
 end
 
@@ -1035,46 +1073,103 @@ local collection = {} do
 	---------------------------------------------
 	--           Methods : Id selector
 	---------------------------------------------
-	function collection:getFirstChildById(name,value)
-		if type(name) ~= "string" then
-			error(("[collection.getFirstChildById] getFirstChildById method arg 1 'name' must be a string, but got %s"):format(type(name)))
+	function collection:getFirstChildById(id)
+		if type(id) ~= "string" then
+			error(("[collection.getFirstChildById] getFirstChildById method arg 1 'id' must be a string, but got %s"):format(type(id)))
 		end
-		if type(value) ~= "string" then
-			error(("[collection.getFirstChildById] getFirstChildById method arg 2 'value' must be a string, but got %s"):format(type(value)))
-		end
-		return self:getFirstChildByOption("id",value)
+		return self:getFirstChildByOption("id",id)
 	end
 
-	function collection:getChildrenById(name,value)
-		if type(name) ~= "string" then
-			error(("[collection.getChildrenById] getChildrenById method arg 1 'name' must be a string, but got %s"):format(type(name)))
+	function collection:getChildrenById(id)
+		if type(id) ~= "string" then
+			error(("[collection.getChildrenById] getFirstChildById method arg 1 'id' must be a string, but got %s"):format(type(id)))
 		end
-		if type(value) ~= "string" then
-			error(("[collection.getChildrenById] getFirstChildById method arg 2 'value' must be a string, but got %s"):format(type(value)))
-		end
-		return self:getChildrenByOption("id",value)
+		return self:getChildrenByOption("id",id)
 	end
 
-	function collection:getFirstDescendantById(name,value)
-		if type(name) ~= "string" then
-			error(("[collection.getFirstDescendantById] getFirstDescendantById method arg 1 'name' must be a string, but got %s"):format(type(name)))
+	function collection:getFirstDescendantById(id)
+		if type(id) ~= "string" then
+			error(("[collection.getFirstDescendantById] getFirstDescendantById method arg 1 'id' must be a string, but got %s"):format(type(id)))
 		end
-		if type(value) ~= "string" then
-			error(("[collection.getFirstDescendantById] getFirstDescendantById method arg 2 'value' must be a string, but got %s"):format(type(value)))
-		end
-		return self:getFirstDescendantByOption("id",value)
+		return self:getFirstDescendantByOption("id",id)
 	end
 
-	function collection:getDescendantsById(name,value)
-		if type(name) ~= "string" then
-			error(("[collection.getDescendantsById] getDescendantsById method arg 1 'name' must be a string, but got %s"):format(type(name)))
+	function collection:getDescendantsById(id)
+		if type(id) ~= "string" then
+			error(("[collection.getDescendantsById] getDescendantsById method arg 1 'id' must be a string, but got %s"):format(type(id)))
 		end
-		if type(value) ~= "string" then
-			error(("[collection.getDescendantsById] getDescendantsById method arg 2 'value' must be a string, but got %s"):format(type(value)))
-		end
-		return self:getDescendantsByOption("id",value)
+		return self:getDescendantsByOption("id",id)
 	end
 
+	---------------------------------------------
+	--         Methods : Class selector
+	---------------------------------------------
+	local hasToken = tokenList.has
+	local classNameParse = classNameParser.parse
+	local function hasClass(self,class)
+		local str = getOption(self,"class")
+		return str and hasToken(classNameParse(str),class)
+	end
+
+	function collection:getFirstChildByClassName(class)
+		if type(class) ~= "string" then
+			error(("[collection.getFirstChildByClassName] getFirstChildByClassName method arg 1 'class' must be a string, but got %s"):format(type(class)))
+		end
+		for index,child in ipairs(self) do
+			if hasClass(child,class) then
+				return child,index
+			end
+		end
+	end
+
+	function collection:getChildrenByClassName(class)
+		if type(class) ~= "string" then
+			error(("[collection.getChildrenByClassName] getChildrenByClassName method arg 1 'class' must be a string, but got %s"):format(type(class)))
+		end
+		local children = {}
+		for _,child in ipairs(self) do
+			if type(child) == "table" and hasClass(child,class) then
+				tinsert(children,child)
+			end
+		end
+		return new(children)
+	end
+
+	local function getFirstDescendantByClassName(self,class)
+		local result
+		for _,child in ipairs(self) do
+			if type(child) == "table" then
+				if hasClass(child,class) then return child end
+				result = getFirstDescendantByClassName(child,class)
+				if result then return result end
+			end
+		end
+	end
+	function collection:getFirstDescendantByClassName(class)
+		if type(class) ~= "string" then
+			error(("[collection.getFirstDescendantByClassName] getFirstDescendantByClassName method arg 1 'class' must be a string, but got %s"):format(type(class)))
+		end
+		if hasClass(self,class) then return self end
+		return getFirstDescendantByClassName(self,class)
+	end
+
+	local function getDescendantsByClassName(self,class,list)
+		for _,child in ipairs(self) do
+			if type(child) == "table" then
+				if hasClass(child,class) then tinsert(list,child) end
+				getDescendantsByClassName(child,class,list)
+			end
+		end
+	end
+	function collection:getDescendantsByClassName(class)
+		if type(class) ~= "string" then
+			error(("[collection.getDescendantsByClassName] getDescendantsByClassName method arg 1 'class' must be a string, but got %s"):format(type(class)))
+		end
+		local list = {}
+		if hasClass(self,class) then tinsert(list,self) end
+		getDescendantsByClassName(self,class,list)
+		return new(list)
+	end
 end
 
 ---------------------------------------------
@@ -1263,41 +1358,6 @@ function item.new(tag,option,t)
 	return t
 end
 module.item = item
-
-local function hexStr(h)
-	return schar(tonumber(h,16))
-end
-local function decStr(h)
-	return schar(tonumber(h,10))
-end
-local function toLuaStr(str)
-	str = sgsub(str,"&#x([%x]+);",hexStr)
-	str = sgsub(str,"&#([0-9]+);",decStr)
-	str = sgsub(str,"&quot;",'"')
-	str = sgsub(str,"&apos;","'")
-	str = sgsub(str,"&gt;",">")
-	str = sgsub(str,"&lt;","<")
-	str = sgsub(str,"&amp;","&")
-	str = sgsub(str,"\\n","\n")
-	str = sgsub(str,"\\t","\t")
-	return str
-end
-module.toLuaStr = toLuaStr
-
-local function strToHex(c)
-	return sformat("&#x%X;", sbyte(c))
-end
-local function toXmlStr(str)
-	str = sgsub(str,"&","&amp;")
-	str = sgsub(str,"<","&lt;")
-	str = sgsub(str,">","&gt;")
-	str = sgsub(str,"\"","&quot;")
-   	str = sgsub(str,"([^%w%&%;%p%\t%\32])",strToHex)
-	str = sgsub(str,"\n","\\n")
-	str = sgsub(str,"\t","\\t")
-	return str
-end
-module.toXmlStr = toXmlStr
 
 -- <a option1="test" option2="test2"></a>
 -- => {option1 = "test", option2 = "test2"}
