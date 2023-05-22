@@ -6,6 +6,7 @@ local module = {};
 -- TODO: querySelector
 -- TODO: html items
 -- TODO: Rewrite xml parser
+-- TODO: :root
 
 local tremove = table.remove
 local tinsert = table.insert
@@ -98,6 +99,38 @@ local utility = {} do
 		return str
 	end
 
+
+	local stringEscapes = utility.stringEscapes
+	local formatNTH = utility.formatNTH
+	function utility.parseString(str,init,initChar)
+		initChar = initChar or ssub(str,init,init)
+		local pos = init+1 -- ignore " / '
+		local buffer = {}
+		while true do
+			local start,_,char = sfind(str,"([\\'\"])",pos)
+			if not start then
+				error(("[Utility.parseString: buffer exhausted] String is opened at %s char (%s). But String is not closed."):format(formatNTH(init),initChar))
+			end
+
+			-- insert last string
+			tinsert(buffer,ssub(str,pos,start-1))
+			pos = start + 1
+
+			if char == initChar then
+				-- closed
+				break
+			elseif char == "\\" then
+				-- escape
+				local target = ssub(str,pos,pos)
+				tinsert(buffer,stringEscapes[target] or target)
+				pos = pos + 1
+			else
+				tinsert(buffer,char)
+			end
+		end
+		return tconcat(buffer),pos
+	end
+
 end
 
 ---------------------------------------------
@@ -111,6 +144,7 @@ local selectorParser = {} do
 	local formatNTH = utility.formatNTH
 	local regexEscape = utility.regexEscape
 	local stringEscapes = utility.stringEscapes
+	local parseString = utility.parseString
 
 	---------------------------------------------
 	--          selectorParser Consts
@@ -337,37 +371,6 @@ local selectorParser = {} do
 	---------------------------------------------
 	--     selectorParser Private methods
 	---------------------------------------------
-	function selectorParser._parseString(str,init,initChar)
-		local pos = init+1
-		local buffer = {}
-		while true do
-			local start,_,char = sfind(str,"([\\'\"])",pos)
-			if not start then
-				error(("[SelectorParser._parseString: buffer exhausted] String is opened at %s char (%s). But String is not closed."):format(formatNTH(init),initChar))
-			end
-
-			-- insert last string
-			tinsert(buffer,ssub(str,pos,start-1))
-			pos = start + 1
-
-			if char == initChar then
-				-- closed
-				break
-			elseif char == "\\" then
-				-- escape
-				local target = ssub(str,pos,pos)
-				-- if not newChar then
-					-- error(("[SelectorParser._parseString: unknown escape] Escape '\\%s', which is %s char is not defined."):format(ssub(str,pos,pos),formatNTH(init)))
-				-- end
-				-- tinsert(buffer,newChar)
-				tinsert(buffer,stringEscapes[target] or target)
-				pos = pos + 1
-			else
-				tinsert(buffer,char)
-			end
-		end
-		return tconcat(buffer),pos
-	end
 
 	-- create regexs by condition operator and value
 	function selectorParser._buildValueRegex(propertyCondition,value)
@@ -443,25 +446,15 @@ local selectorParser = {} do
 				-- return data,endAt+1
 				break
 
-			elseif op == 3 then
+			elseif op == 3 or op == 4 then
 				-- opRegex[OP_STRING_DOUBLE_QUOTE],
-				if not condition then
-					error("[SelectorParser._parseProperty: unexpected string start] string can only start after property condition operator. Possible cause: ' or \" token was got before '~=', '^=', '*=' or some operators (example: [\"label\" ~= a]). Did you want to escape that token? place '\\' in front of that token to resolve it"..buildErrorTrace(str,startAt,endAt,-1))
-				elseif #value ~= 0 then
-					error("[SelectorParser._parseProperty: unexpected string start] got unexpected token \" in value. Possible cause: ' or \" token was got in inside of value (example: [label ~= a\"b\"]). Did you want to escape that token? place '\\' in front of that token to resolve it"..buildErrorTrace(str,startAt,endAt,-1))
-				end
-				matched,pos = selectorParser._parseString(str,startAt,matched)
-				value[-1] = true
-				tinsert(value,matched)
-
-			elseif op == 4 then
 				-- opRegex[OP_STRING_SINGLE_QUOTE],
 				if not condition then
 					error("[SelectorParser._parseProperty: unexpected string start] string can only start after property condition operator. Possible cause: ' or \" token was got before '~=', '^=', '*=' or some operators (example: [\"label\" ~= a]). Did you want to escape that token? place '\\' in front of that token to resolve it"..buildErrorTrace(str,startAt,endAt,-1))
 				elseif #value ~= 0 then
-					error("[SelectorParser._parseProperty: unexpected string start] got unexpected token ' in value. Possible cause: ' or \" token was got in inside of value (example: [label ~= a\"b\"]). Did you want to escape that token? place '\\' in front of that token to resolve it"..buildErrorTrace(str,startAt,endAt,-1))
+					error("[SelectorParser._parseProperty: unexpected string start] got unexpected token ' or \" in value. Possible cause: ' or \" token was got in inside of value (example: [label ~= a\"b\"]). Did you want to escape that token? place '\\' in front of that token to resolve it"..buildErrorTrace(str,startAt,endAt,-1))
 				end
-				matched,pos = selectorParser._parseString(str,startAt,matched)
+				matched,pos = parseString(str,startAt,matched)
 				value[-1] = true
 				tinsert(value,matched)
 
@@ -749,19 +742,30 @@ local selectorParser = {} do
 		return parsed
 	end
 
-	-- print(prettyParsed(selectorParser.parse("wow.a > b>a  z-.j    [label][src\\||='wow']")))
-	-- if spec then
-	--     local ok,result
+end
 
-	--     ok,result = pcall(selectorParser._parseString,"?  'Test String'  ?",4,"'")
-	--     assert(ok and result == "Test String",sformat("SPEC: not match with expection (result: '%s')",result))
+---------------------------------------------
+--          Module: querySelector
+---------------------------------------------
+local querySelector = {} do
+	querySelector.__index = querySelector
+	local cache = setmetatable({},{__mod="kv"})
 
-	--     ok,result = pcall(selectorParser._parseString,"?  'Test String  ?",4,"'")
-	--     assert(not ok,sformat("SPEC: not match with expection (result: '%s')",result))
+	function querySelector.new(selector)
+		if type(selector) == "table" then return selector end
 
-	--     ok,result = pcall(selectorParser._parseString,"?  'Test\\nString'  ?",4,"'")
-	--     assert(ok and result == "Test\nString",sformat("SPEC: not match with expection (result: '%s')",result))
-	-- end
+		local cached = cache[selector]
+		if cached then return cached end
+
+		cached = setmetatable(selectorParser.parse(selector),querySelector)
+		cache[selector] = cached
+		return cached
+	end
+
+	function querySelector:find(root)
+
+	end
+
 end
 
 ---------------------------------------------
@@ -1170,6 +1174,19 @@ local collection = {} do
 		getDescendantsByClassName(self,class,list)
 		return new(list)
 	end
+
+	---------------------------------------------
+	--         Methods : Query selector
+	---------------------------------------------
+	function collection:querySelector(selector)
+		if type(selector) == "string" then
+
+		end
+
+		while true do
+
+		end
+	end
 end
 
 ---------------------------------------------
@@ -1199,7 +1216,7 @@ local element = setmetatable({},collection) do
 	function element:removeIndex(index)
 		local this = self[index]
 		if not this then
-			error("[item.remove] couldn't remove  because anything match index with '%s' not found from Item")
+			error("[element.remove] couldn't remove child because anything match index with '%s' not found from Item")
 		end
 		this.__parent = nil
 		this.__pindex = nil
@@ -1213,7 +1230,7 @@ end
 ---Remove item with value (find and remove)
 ---@param value string|xmlItem item to remove
 ---@return boolean passed
-function item:removeValue(value)
+function item:remove(value)
 	local pass,ty = isItem(value)
 	if not (pass or ty == "string") then
 		error(("[item.removeValue] removeValue method arg 1 'value' must be an item object or a string, but got %s"):format(type(value)))
