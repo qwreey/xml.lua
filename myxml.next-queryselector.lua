@@ -63,6 +63,9 @@ local utility = {} do
 		["n"] = "\n",
 		["r"] = "\r",
 		["t"] = "\t",
+		["\\"] = "\\",
+		["\""] = "\"";
+		["\'"] = "\'";
 	}
 
 	local function hexStr(h)
@@ -99,36 +102,54 @@ local utility = {} do
 		return str
 	end
 
+	utility.utf8OnlyRegex = "[%z\1-\127\194-\244][\128-\191]+"
 
 	local stringEscapes = utility.stringEscapes
 	local formatNTH = utility.formatNTH
-	function utility.parseString(str,init,initChar)
-		initChar = initChar or ssub(str,init,init)
-		local pos = init+1 -- ignore " / '
-		local buffer = {}
-		while true do
-			local start,_,char = sfind(str,"([\\'\"])",pos)
-			if not start then
-				error(("[Utility.parseString: buffer exhausted] String is opened at %s char (%s). But String is not closed."):format(formatNTH(init),initChar))
-			end
 
-			-- insert last string
-			tinsert(buffer,ssub(str,pos,start-1))
-			pos = start + 1
+	do
+		local opRegex = {}
+		local OP_UNICODE = #opRegex+1
+		tinsert(opRegex,"^("..utility.utf8OnlyRegex..")")
+		local OP_ESCAPE = #opRegex+1
+		tinsert(opRegex,"^\\(.)")
+		local OP_CLOSE = #opRegex+1
+		tinsert(opRegex,"^([\"'])") -- should match with initChar
+		local OP_CHARS = #opRegex+1
+		tinsert(opRegex,"^([^\\\"]+)")
 
-			if char == initChar then
-				-- closed
-				break
-			elseif char == "\\" then
-				-- escape
-				local target = ssub(str,pos,pos)
-				tinsert(buffer,stringEscapes[target] or target)
-				pos = pos + 1
-			else
-				tinsert(buffer,char)
+		function utility.parseString(str,init,initChar)
+			initChar = initChar or ssub(str,init,init)
+			local pos = init+1 -- ignore " / '
+			local buffer = {}
+			while true do
+				local startsAt,endsAt,catch,op
+				for thisOp,regex in ipairs(opRegex) do
+					startsAt,endsAt,catch = sfind(str,regex,pos)
+					op = thisOp
+					if startsAt then
+						break
+					end
+				end
+
+				if not startsAt then
+					error(("[Utility.parseString: buffer exhausted] String is opened at %s char (%s). But String is not closed."):format(formatNTH(init),initChar))
+				end
+
+				pos = endsAt + 1
+				if op == OP_UNICODE or op == OP_CHARS then
+					tinsert(buffer,catch)
+				elseif op == OP_ESCAPE then
+					tinsert(buffer,stringEscapes[catch] or catch)
+				elseif op == OP_CLOSE then
+					if catch == initChar then
+						break
+					end
+					tinsert(buffer,catch)
+				end
 			end
+			return tconcat(buffer),pos
 		end
-		return tconcat(buffer),pos
 	end
 
 end
@@ -143,8 +164,8 @@ local selectorParser = {} do
 	---------------------------------------------
 	local formatNTH = utility.formatNTH
 	local regexEscape = utility.regexEscape
-	local stringEscapes = utility.stringEscapes
 	local parseString = utility.parseString
+	local stringEscapes = utility.stringEscapes
 
 	---------------------------------------------
 	--          selectorParser Consts
@@ -299,7 +320,8 @@ local selectorParser = {} do
 
 	-- utf8 char
 	local OP_UTFCHAR = #opNames+1
-	tinsert(opRegex,"("..utf8.charpattern..")")
+	-- tinsert(opRegex,"("..utf8.charpattern..")")
+	tinsert(opRegex,"^("..utility.utf8OnlyRegex..")")
 	tinsert(opNames,"OP_UTFCHAR")
 
 	-- condition types
@@ -330,23 +352,6 @@ local selectorParser = {} do
 	selectorParser.INDEX_SEGMENT_CONDITION = INDEX_SEGMENT_CONDITION
 	local INDEX_SEGMENT_ACCESSMODE = 2
 	selectorParser.INDEX_SEGMENT_ACCESSMODE = INDEX_SEGMENT_ACCESSMODE
-
-	-- property parser regexs
-	local propertyRegex = {
-		opRegex[OP_PROPERTY_OPEN],
-		opRegex[OP_PROPERTY_CLOSE],
-		opRegex[OP_STRING_DOUBLE_QUOTE],
-		opRegex[OP_STRING_SINGLE_QUOTE],
-		opRegex[OP_PROPERTY_CONDITION_EQUAL],
-		opRegex[OP_PROPERTY_CONDITION_WORD],
-		opRegex[OP_PROPERTY_CONDITION_DASH],
-		opRegex[OP_PROPERTY_CONDITION_BEGIN],
-		opRegex[OP_PROPERTY_CONDITION_END],
-		opRegex[OP_PROPERTY_CONDITION_CONTAIN],
-		"^([%-_%w]+)",
-		"^\\(.?)",
-		"("..utf8.charpattern..")"
-	}
 
 	-- create error position, information trace
 	local function buildErrorTrace(str,tokenStart,tokenEnd,opcode)
@@ -382,7 +387,7 @@ local selectorParser = {} do
 		return tconcat(buffer)
 	end
 	selectorParser.prettyParsed = prettyParsed
-	
+
 	---------------------------------------------
 	--     selectorParser Private methods
 	---------------------------------------------
@@ -433,135 +438,157 @@ local selectorParser = {} do
 	-- find object which label property is Hello
 	-- [src]
 	-- find object which has src property
-	function selectorParser._parseProperty(str,init)
-		local pos = init
-		local lastPos
-		local name,value = {},{}
-		local condition
-		local startAt,endAt,matched,op
+	do
+		-- property parser regexs
+		local propertyRegex = {}
 
-		while true do
-			for index,regex in ipairs(propertyRegex) do
-				startAt,endAt,matched = sfind(str,regex,pos)
-				if startAt then
-					op = index
+		local POP_PROPERTY_OPEN = #propertyRegex+1
+		tinsert(propertyRegex,opRegex[OP_PROPERTY_OPEN])
+		local POP_PROPERTY_CLOSE = #propertyRegex+1
+		tinsert(propertyRegex,opRegex[OP_PROPERTY_CLOSE])
+		local POP_STRING_DOUBLE_QUOTE = #propertyRegex+1
+		tinsert(propertyRegex,opRegex[OP_STRING_DOUBLE_QUOTE])
+		local POP_STRING_SINGLE_QUOTE = #propertyRegex+1
+		tinsert(propertyRegex,opRegex[OP_STRING_SINGLE_QUOTE])
+		local POP_PROPERTY_CONDITION_EQUAL = #propertyRegex+1
+		tinsert(propertyRegex,opRegex[OP_PROPERTY_CONDITION_EQUAL])
+		local POP_PROPERTY_CONDITION_WORD = #propertyRegex+1
+		tinsert(propertyRegex,opRegex[OP_PROPERTY_CONDITION_WORD])
+		local POP_PROPERTY_CONDITION_DASH = #propertyRegex+1
+		tinsert(propertyRegex,opRegex[OP_PROPERTY_CONDITION_DASH])
+		local POP_PROPERTY_CONDITION_BEGIN = #propertyRegex+1
+		tinsert(propertyRegex,opRegex[OP_PROPERTY_CONDITION_BEGIN])
+		local POP_PROPERTY_CONDITION_END = #propertyRegex+1
+		tinsert(propertyRegex,opRegex[OP_PROPERTY_CONDITION_END])
+		local POP_PROPERTY_CONDITION_CONTAIN = #propertyRegex+1
+		tinsert(propertyRegex,opRegex[OP_PROPERTY_CONDITION_CONTAIN])
+
+		local POP_WORD = #propertyRegex+1
+		tinsert(propertyRegex,"^([%-_%w]+)")
+
+		local POP_ESCAPE = #propertyRegex+1
+		tinsert(propertyRegex,"^\\(.?)")
+
+		local POP_UTF8 = #propertyRegex+1
+		tinsert(propertyRegex,"^("..utility.utf8OnlyRegex..")")
+
+		function selectorParser._parseProperty(str,init)
+			local pos = init
+			local lastPos
+			local name,value = {},{}
+			local condition
+			local startAt,endAt,matched,op
+
+			while true do
+				for index,regex in ipairs(propertyRegex) do
+					startAt,endAt,matched = sfind(str,regex,pos)
+					if startAt then
+						op = index
+						break
+					end
+				end
+
+				if not startAt then
+					error(sformat("[SelectorParser._parseProperty: buffer exhausted] unexpected token at %d",pos))
+
+				elseif op == POP_PROPERTY_OPEN then
+					error("[SelectorParser._parseProperty: unexpected property open] property open bracket was got inside of the property selector. Possible cause: '[' token was got in inside of '[]' (example: [label[]). Did you want to escape that token? place '\\' in front of '[' to resolve it"..buildErrorTrace(str,startAt,endAt,-1))
+
+				elseif op == POP_PROPERTY_CLOSE then
+					-- return data,endAt+1
 					break
+
+				elseif op == POP_STRING_DOUBLE_QUOTE or
+					   op == POP_STRING_SINGLE_QUOTE then
+					if not condition then
+						error("[SelectorParser._parseProperty: unexpected string start] string can only start after property condition operator. Possible cause: ' or \" token was got before '~=', '^=', '*=' or some operators (example: [\"label\" ~= a]). Did you want to escape that token? place '\\' in front of that token to resolve it"..buildErrorTrace(str,startAt,endAt,-1))
+					elseif #value ~= 0 then
+						error("[SelectorParser._parseProperty: unexpected string start] got unexpected token ' or \" in value. Possible cause: ' or \" token was got in inside of value (example: [label ~= a\"b\"]). Did you want to escape that token? place '\\' in front of that token to resolve it"..buildErrorTrace(str,startAt,endAt,-1))
+					end
+					matched,pos = parseString(str,startAt,matched)
+					value[-1] = true
+					tinsert(value,matched)
+
+				elseif op == POP_PROPERTY_CONDITION_EQUAL then
+					if condition then
+						error("[SelectorParser._parseProperty: condition operator was got already] Possible cause: got repeated operator token (example: [label ~= ~=]). Did you want to escape that token? place '\\' in each char of token to resolve it"..buildErrorTrace(str,startAt,endAt,OP_PROPERTY_CONDITION_WORD))
+					end
+					condition = OP_PROPERTY_CONDITION_EQUAL
+					pos = endAt+1
+
+				elseif op == POP_PROPERTY_CONDITION_WORD then
+					if condition then
+						error("[SelectorParser._parseProperty: unexpected condition token] condition operator was got already. Possible cause: got repeated operator token (example: [label ~= ~=]). Did you want to escape that token? place '\\' on each char of token to resolve it"..buildErrorTrace(str,startAt,endAt,OP_PROPERTY_CONDITION_WORD))
+					end
+					condition = OP_PROPERTY_CONDITION_WORD
+					pos = endAt+1
+
+				elseif op == POP_PROPERTY_CONDITION_DASH then
+					if condition then
+						error("[SelectorParser._parseProperty: unexpected condition token] condition operator was got already. Possible cause: got repeated operator token (example: [label ~= ~=]). Did you want to escape that token? place '\\' on each char of token to resolve it"..buildErrorTrace(str,startAt,endAt,OP_PROPERTY_CONDITION_DASH))
+					end
+					condition = OP_PROPERTY_CONDITION_DASH
+					pos = endAt+1
+
+				elseif op == POP_PROPERTY_CONDITION_BEGIN then
+					if condition then
+						error("[SelectorParser._parseProperty: unexpected condition token] condition operator was got already. Possible cause: got repeated operator token (example: [label ~= ~=]). Did you want to escape that token? place '\\' on each char of token to resolve it"..buildErrorTrace(str,startAt,endAt,OP_PROPERTY_CONDITION_BEGIN))
+					end
+					condition = OP_PROPERTY_CONDITION_BEGIN
+					pos = endAt+1
+
+				elseif op == POP_PROPERTY_CONDITION_END then
+					if condition then
+						error("[SelectorParser._parseProperty: unexpected condition token] condition operator was got already. Possible cause: got repeated operator token (example: [label ~= ~=]). Did you want to escape that token? place '\\' on each char of token to resolve it"..buildErrorTrace(str,startAt,endAt,OP_PROPERTY_CONDITION_END))
+					end
+					condition = OP_PROPERTY_CONDITION_END
+					pos = endAt+1
+
+				elseif op == POP_PROPERTY_CONDITION_CONTAIN then
+					if condition then
+						error("[SelectorParser._parseProperty: unexpected condition token] condition operator was got already. Possible cause: got repeated operator token (example: [label ~= ~=]). Did you want to escape that token? place '\\' on each char of token to resolve it"..buildErrorTrace(str,startAt,endAt,OP_PROPERTY_CONDITION_CONTAIN))
+					end
+					condition = OP_PROPERTY_CONDITION_CONTAIN
+					pos = endAt+1
+
+				elseif op == POP_WORD then
+					if value[-1] then
+						error("[SelectorParser._parseProperty: unexpected token after value string] property selector value was set by string already. you can't give more value. Possible cause: got more tokens after value string (example: [label = \"a\"a])")
+					end
+					tinsert(condition and value or name,matched)
+					pos = endAt+1
+
+				elseif op == POP_ESCAPE then
+					if value[-1] then
+						error("[SelectorParser._parseProperty: unexpected token after value string] property selector value was set by string already. you can't give more value. Possible cause: got more tokens after value string (example: [label = \"a\"a])")
+					end
+					tinsert(condition and value or name,stringEscapes[matched] or matched)
+					pos = endAt+1
+
+				elseif op == 13 then
+					-- "("..utf8.charpattern..")",
+					-- utf8
+					if value[-1] then
+						error("[SelectorParser._parseProperty: unexpected token after value string] property selector value was set by string already. you can't give more value. Possible cause: got more tokens after value string (example: [label = \"a\"a])")
+					end
+					tinsert(condition and value or name,matched)
+					pos = endAt+1
+
 				end
+
+				if lastPos == pos then
+					error(sformat("[SelectorParser._parseProperty: stuck in an infinite loop] The value of pos is not being updated for unknown reasons. This may be a bug in the library implementation. Please write a bug report about:\nDEBUG:\nstr: %s\ninit: %s\npos: %s",tostring(str),tostring(init),tostring(pos)))
+				end
+				lastPos = pos
 			end
 
-			if not startAt then
-				error(sformat("[SelectorParser._parseProperty: buffer exhausted] unexpected token at %d",pos))
-
-			elseif op == 1 then
-				-- opRegex[OP_PROPERTY_OPEN],
-				error("[SelectorParser._parseProperty: unexpected property open] property open bracket was got inside of the property selector. Possible cause: '[' token was got in inside of '[]' (example: [label[]). Did you want to escape that token? place '\\' in front of '[' to resolve it"..buildErrorTrace(str,startAt,endAt,-1))
-
-			elseif op == 2 then
-				-- opRegex[OP_PROPERTY_CLOSE],
-				-- return data,endAt+1
-				break
-
-			elseif op == 3 or op == 4 then
-				-- opRegex[OP_STRING_DOUBLE_QUOTE],
-				-- opRegex[OP_STRING_SINGLE_QUOTE],
-				if not condition then
-					error("[SelectorParser._parseProperty: unexpected string start] string can only start after property condition operator. Possible cause: ' or \" token was got before '~=', '^=', '*=' or some operators (example: [\"label\" ~= a]). Did you want to escape that token? place '\\' in front of that token to resolve it"..buildErrorTrace(str,startAt,endAt,-1))
-				elseif #value ~= 0 then
-					error("[SelectorParser._parseProperty: unexpected string start] got unexpected token ' or \" in value. Possible cause: ' or \" token was got in inside of value (example: [label ~= a\"b\"]). Did you want to escape that token? place '\\' in front of that token to resolve it"..buildErrorTrace(str,startAt,endAt,-1))
-				end
-				matched,pos = parseString(str,startAt,matched)
-				value[-1] = true
-				tinsert(value,matched)
-
-			elseif op == 5 then
-				-- opRegex[OP_PROPERTY_CONDITION_EQUAL],
-				if condition then
-					error("[SelectorParser._parseProperty: condition operator was got already] Possible cause: got repeated operator token (example: [label ~= ~=]). Did you want to escape that token? place '\\' in each char of token to resolve it"..buildErrorTrace(str,startAt,endAt,OP_PROPERTY_CONDITION_WORD))
-				end
-				condition = OP_PROPERTY_CONDITION_EQUAL
-				pos = endAt+1
-
-			elseif op == 6 then
-				-- opRegex[OP_PROPERTY_CONDITION_WORD],
-				if condition then
-					error("[SelectorParser._parseProperty: unexpected condition token] condition operator was got already. Possible cause: got repeated operator token (example: [label ~= ~=]). Did you want to escape that token? place '\\' on each char of token to resolve it"..buildErrorTrace(str,startAt,endAt,OP_PROPERTY_CONDITION_WORD))
-				end
-				condition = OP_PROPERTY_CONDITION_WORD
-				pos = endAt+1
-
-			elseif op == 7 then
-				-- opRegex[OP_PROPERTY_CONDITION_DASH],
-				if condition then
-					error("[SelectorParser._parseProperty: unexpected condition token] condition operator was got already. Possible cause: got repeated operator token (example: [label ~= ~=]). Did you want to escape that token? place '\\' on each char of token to resolve it"..buildErrorTrace(str,startAt,endAt,OP_PROPERTY_CONDITION_DASH))
-				end
-				condition = OP_PROPERTY_CONDITION_DASH
-				pos = endAt+1
-
-			elseif op == 8 then
-				-- opRegex[OP_PROPERTY_CONDITION_BEGIN],
-				if condition then
-					error("[SelectorParser._parseProperty: unexpected condition token] condition operator was got already. Possible cause: got repeated operator token (example: [label ~= ~=]). Did you want to escape that token? place '\\' on each char of token to resolve it"..buildErrorTrace(str,startAt,endAt,OP_PROPERTY_CONDITION_BEGIN))
-				end
-				condition = OP_PROPERTY_CONDITION_BEGIN
-				pos = endAt+1
-
-			elseif op == 9 then
-				-- opRegex[OP_PROPERTY_CONDITION_END],
-				if condition then
-					error("[SelectorParser._parseProperty: unexpected condition token] condition operator was got already. Possible cause: got repeated operator token (example: [label ~= ~=]). Did you want to escape that token? place '\\' on each char of token to resolve it"..buildErrorTrace(str,startAt,endAt,OP_PROPERTY_CONDITION_END))
-				end
-				condition = OP_PROPERTY_CONDITION_END
-				pos = endAt+1
-
-			elseif op == 10 then
-				-- opRegex[OP_PROPERTY_CONDITION_CONTAIN],
-				if condition then
-					error("[SelectorParser._parseProperty: unexpected condition token] condition operator was got already. Possible cause: got repeated operator token (example: [label ~= ~=]). Did you want to escape that token? place '\\' on each char of token to resolve it"..buildErrorTrace(str,startAt,endAt,OP_PROPERTY_CONDITION_CONTAIN))
-				end
-				condition = OP_PROPERTY_CONDITION_CONTAIN
-				pos = endAt+1
-
-			elseif op == 11 then
-				-- "^([%-_%w]+)",
-				-- word
-				if value[-1] then
-					error("[SelectorParser._parseProperty: unexpected token after value string] property selector value was set by string already. you can't give more value. Possible cause: got more tokens after value string (example: [label = \"a\"a])")
-				end
-				tinsert(condition and value or name,matched)
-				pos = endAt+1
-
-			elseif op == 12 then
-				-- "^\\(.?)",
-				-- escape
-				if value[-1] then
-					error("[SelectorParser._parseProperty: unexpected token after value string] property selector value was set by string already. you can't give more value. Possible cause: got more tokens after value string (example: [label = \"a\"a])")
-				end
-				tinsert(condition and value or name,stringEscapes[matched] or matched)
-				pos = endAt+1
-
-			elseif op == 13 then
-				-- "("..utf8.charpattern..")",
-				-- utf8
-				if value[-1] then
-					error("[SelectorParser._parseProperty: unexpected token after value string] property selector value was set by string already. you can't give more value. Possible cause: got more tokens after value string (example: [label = \"a\"a])")
-				end
-				tinsert(condition and value or name,matched)
-				pos = endAt+1
-
-			end
-
-			if lastPos == pos then
-				error(sformat("[SelectorParser._parseProperty: stuck in an infinite loop] The value of pos is not being updated for unknown reasons. This may be a bug in the library implementation. Please write a bug report about:\nDEBUG:\nstr: %s\ninit: %s\npos: %s",tostring(str),tostring(init),tostring(pos)))
-			end
-			lastPos = pos
+			-- create property segment
+			return {
+				[INDEX_CONDITION_TYPE] = CONDITION_PROPERTY,
+				[INDEX_CONDITION_VALUE] = tconcat(name),
+				[INDEX_CONDITION_OPTION] = selectorParser._buildValueRegex(condition,tconcat(value)),
+			},endAt+1
 		end
-
-		-- create property segment
-		return {
-			[INDEX_CONDITION_TYPE] = CONDITION_PROPERTY,
-			[INDEX_CONDITION_VALUE] = tconcat(name),
-			[INDEX_CONDITION_OPTION] = selectorParser._buildValueRegex(condition,tconcat(value)),
-		},endAt+1
 	end
 
 	---------------------------------------------
@@ -1286,7 +1313,6 @@ local element = setmetatable({},collection) do
 		local ok,result = pcall(getmetatable,t)
 		if ok then return result end
 	end
-
 	-- check is instance of element class
 	function element.isElement(object)
 		if type(object) == "table" and pcallGetMetatable(object) == element then
@@ -1296,28 +1322,95 @@ local element = setmetatable({},collection) do
 	end
 	local isElement = element.isElement
 
+	function element.new(tag,option,children,optionalParent)
+		local this = children or {}
+		this.tag = tag or ""
+		this.option = option or {}
+		if optionalParent then
+			if not isElement(optionalParent) then
+				error(("[element.new] class 'element' constructor arg 4 'optionalParent' must be a element or root, but got %s"):format(type(optionalParent)))
+			end
+			this.__parent = optionalParent
+			tinsert(optionalParent,this)
+			this.__pindex = #optionalParent
+		end
+		setmetatable(this,element)
+		return this
+	end
+
+	function element:__index(key)
+		if key == "__parent" then
+			return self.__parent
+		end
+	end
+	function element:__newindex(key,value)
+		if key == "parent" then
+			error("[element.parent] property parent is readonly value")
+		end
+	end
+
 	---Remove item with index
 	---@param index number index of item that you want to remove
 	---@return string|nil|element removed removed item
 	function element:removeIndex(index)
-		local this = self[index]
-		if not this then
+		local child = self[index]
+		if not child then
 			error("[element.remove] couldn't remove child because anything match index with '%s' not found from Item")
 		end
-		this.__parent = nil
-		this.__pindex = nil
+		child.__parent = nil
+		child.__pindex = nil
+		return tremove(self,index)
+	end
+
+	---Remove item with index
+	---@param children element index of item that you want to remove
+	---@return string|nil|element removed removed item
+	function element:remove(children)
+		local child = self[index]
+		if not child then
+			error("[element.remove] couldn't remove child because anything match index with '%s' not found from Item")
+		end
+		child.__parent = nil
+		child.__pindex = nil
 		return tremove(self,index)
 	end
 end
 
+---------------------------------------------
+--             Module: Root
+---------------------------------------------
+local root = setmetatable({},element) do
+	root.__index = root
 
-do
+	function root.new(children)
+		local this = children or {}
+		setmetatable(this,root)
+		return this
+	end
+end
+
+---------------------------------------------
+--         Module: parserBase
+---------------------------------------------
+local parserBase = {} do
+	local opRegex = {}
+
+	local OP_WHITESPACE = #opRegex+1
+	tinsert(opRegex,"^[ \n\t]+")
+
 	-- Comment
-	local OP_COMMENT_START = "<!--"
-	local OP_COMMENT_END = "<!--"
+	local OP_COMMENT_START = #opRegex+1
+	tinsert(opRegex,"^<!%-")
+	local OP_COMMENT_END = #opRegex+1
+	tinsert(opRegex,"^%-%->")
+
+	local OP_SPLIT = #opRegex+1
+	tinsert(opRegex,"([ \t\n]+)")
 	
 	-- Doctype
-	local OP_DOCTYPE = "<!DOCTYPE"
+	-- e) DOCTYPE
+	-- TODO: DTD ENTITY and ELEMENT
+	local OP_DTD = "<!DOCTYPE" -- closes with >
 
 	-- CDATA
 	local OP_CDATA_START = "<![CDATA["
@@ -1327,16 +1420,31 @@ do
 	local OP_CLOSE = "</"
 	local OP_
 
-	local function parseXml(str)
-		while true do
-	
-		end
-	
-	
-	
+	function parserBase:parseDTD()
+
 	end
 
+	function parserBase:parseString()
+
+	end
+
+	function parserBase:parseXml(str)
+		while true do
+
+		end
+
+	end
 end
+
+---------------------------------------------
+--           Module: xmlParser
+---------------------------------------------
+-- normal xml parser
+
+---------------------------------------------
+--          Module: htmlParser
+---------------------------------------------
+-- escape <br> or some empty tags
 
 local item = {}
 ---Remove item with value (find and remove)
