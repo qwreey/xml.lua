@@ -87,7 +87,6 @@ local utility = {} do
 		return str
 	end
 
-
 	local function strToHex(c)
 		return sformat("&#x%X;", sbyte(c))
 	end
@@ -96,6 +95,7 @@ local utility = {} do
 		str = sgsub(str,"<","&lt;")
 		str = sgsub(str,">","&gt;")
 		str = sgsub(str,"\"","&quot;")
+		str = sgsub(str,"'","&apos;")
 		str = sgsub(str,"([^%w%&%;%p%\t%\32])",strToHex)
 		str = sgsub(str,"\n","\\n")
 		str = sgsub(str,"\t","\\t")
@@ -152,6 +152,21 @@ local utility = {} do
 		end
 	end
 
+	local function get(object,key)
+		return object[key]
+	end
+	local function pcallGet(object,key)
+		local pass,item = pcall(object,key)
+		if pass then return item end
+		return nil
+	end
+	local function pcallGetMetatable(t)
+		local pass,result = pcall(getmetatable,t)
+		if pass then return result end
+	end
+	utility.get = get
+	utility.pcallGet = pcallGet
+	utility.pcallGetMetatable = pcallGetMetatable
 end
 
 ---------------------------------------------
@@ -834,7 +849,7 @@ local querySelector = {} do
 				-- nothing to do
 			elseif conditionType == CONDITION_ID then
 				if not option then return end
-				if option.tag ~= condition[INDEX_CONDITION_VALUE] then return end
+				if option.id ~= condition[INDEX_CONDITION_VALUE] then return end
 			elseif conditionType == CONDITION_TAG then
 				if element.tag ~= condition[INDEX_CONDITION_VALUE] then return end
 			elseif conditionType == CONDITION_CLASS then
@@ -1027,14 +1042,6 @@ local collection = {} do
 	--          Methods : Tag selector
 	---------------------------------------------
 
-	--[[!autoDoc!
-	@define class:collection
-		function collection:getFirstChildByTag(tag)
-			i: get child object by using tag
-			arg1 string tag: tag of child
-			return: class:collection/nil child item , int index
-	!autoDoc!]]
-	---get child object by using tag
 	---@param tag string tag of child
 	---@return element|nil childitem
 	---@return number|nil index
@@ -1049,13 +1056,6 @@ local collection = {} do
 		end
 	end
 
-	--[[!autoDoc!
-	@define class:collection
-		function collection:getChildrenByTag(tag)
-			i: get child objects by using tag
-			arg string tag: tag of children
-			return: table of class:collection/nil
-	!autoDoc!]]
 	---get child objects by using tag
 	---@param tag string tag of children
 	---@return collection children table of children
@@ -1086,7 +1086,7 @@ local collection = {} do
 		if type(tag) ~= "string" then
 			error(("[collection.getFirstDescendantByTag] getFirstDescendantByTag method arg 1 'tag' must be a string, but got %s"):format(type(tag)))
 		end
-		if self.tag == tag then return self end
+		return getFirstDescendantByTag(self,tag)
 	end
 
 	local function getDescendantsByTag(self,tag,list)
@@ -1102,7 +1102,6 @@ local collection = {} do
 			error(("[collection.getDescendantsByTag] getDescendantsByTag method arg 1 'tag' must be a string, but got %s"):format(type(tag)))
 		end
 		local list = {}
-		if self.tag == tag then tinsert(list,self) end
 		getDescendantsByTag(self,tag,list)
 		return new(list)
 	end
@@ -1307,72 +1306,325 @@ end
 ---------------------------------------------
 ---@class element:collection
 local element = setmetatable({},collection) do
-	element.__index = element
 
-	local function pcallGetMetatable(t)
-		local ok,result = pcall(getmetatable,t)
-		if ok then return result end
-	end
+	local pcallGetMetatable = utility.pcallGetMetatable
 	-- check is instance of element class
 	function element.isElement(object)
-		if type(object) == "table" and pcallGetMetatable(object) == element then
+		if type(object) == "table" and pcallGetMetatable(object) == element and (not object.__disposed) then
 			return true
 		end
 		return false
 	end
 	local isElement = element.isElement
+	local pcallGet = utility.pcallGet
+	local function isRoot(object)
+		if type(object) ~= "table" or (nil == pcallGet(object,"__ROOT")) then
+			return false
+		end
+		return true
+	end
 
-	function element.new(tag,option,children,optionalParent)
-		local this = children or {}
+	function element.new(tag,option,optionalChildren,optionalParent)
+		local this = optionalChildren or {}
 		this.tag = tag or ""
 		this.option = option or {}
 		if optionalParent then
-			if not isElement(optionalParent) then
+			if (not isElement(optionalParent)) and (not isRoot(optionalParent)) then
 				error(("[element.new] class 'element' constructor arg 4 'optionalParent' must be a element or root, but got %s"):format(type(optionalParent)))
 			end
 			this.__parent = optionalParent
 			tinsert(optionalParent,this)
 			this.__pindex = #optionalParent
 		end
+		if optionalChildren then
+			for index,child in ipairs(optionalChildren) do
+				if isElement(child) then
+					local childParent = child.__parent
+					if childParent then
+						tremove(childParent,child.__pindex)
+					end
+					child.__parent = this
+					child.__pindex = index
+				end
+			end
+		end
 		setmetatable(this,element)
 		return this
 	end
 
-	function element:__index(key)
-		if key == "__parent" then
-			return self.__parent
+	local toXmlStr = utility.toXmlStr
+	function element:debug(_buffer,_depth)
+		_depth = _depth or 0
+		_buffer = _buffer or {}
+
+		if _depth ~= 0 then tinsert(_buffer,"\n") end
+		tinsert(_buffer,srep("  ",_depth))
+		if isElement(self) or isRoot(self) then
+			tinsert(_buffer,"<")
+			tinsert(_buffer,self.tag)
+			for i,v in pairs(self.option) do
+				tinsert(_buffer," ")
+				tinsert(_buffer,i)
+				tinsert(_buffer,"=")
+				tinsert(_buffer,"\"")
+				tinsert(_buffer,toXmlStr(v))
+				tinsert(_buffer,"\"")
+			end
+			tinsert(_buffer,#self == 0 and "/>" or ">")
+			tinsert(_buffer," :") -- debug
+			tinsert(_buffer,tostring(self.index))
+			if #self ~= 0 then
+				for _,v in ipairs(self) do
+					element.debug(v,_buffer,_depth+1)
+				end
+				tinsert(_buffer,"\n")
+				tinsert(_buffer,srep("  ",_depth))
+				tinsert(_buffer,"</")
+				tinsert(_buffer,self.tag)
+				tinsert(_buffer,">")
+			end
+		else
+			tinsert(_buffer,self)
 		end
+
+		if _depth == 0 then return tconcat(_buffer) end
+	end
+
+	-- index
+	function element:__index(key)
+		if key == "parent" then
+			return self.__parent
+		elseif key == "index" then
+			return self.__pindex
+		elseif key == "length" then
+			return #self
+		end
+		return element[key]
 	end
 	function element:__newindex(key,value)
-		if key == "parent" then
-			error("[element.parent] property parent is readonly value")
+		if key == "index" or key == "parent" then
+			error(("[element.%s] property %s is readonly value"):format(key,key))
 		end
+		rawset(self,key,value)
 	end
 
+	-- tostring
+	function element:__tostring()
+		return ("<%s>"):format(tostring(self.tag))
+	end
+
+	---Check element has some child
+	---@param child element|string child of you will find index
+	---@return boolean hasChild
+	function element:includes(child)
+		if (not isElement(child)) and type(child) ~= "string" then
+			error(("[element.remove] remove method arg 1 'child' must be a element or number, but got %s"):format(type(child)))
+		end
+		for i,v in ipairs(self) do
+			if v == child then
+				return true
+			end
+		end
+		return false
+	end
+
+	local function indexOf(self,child)
+		for index,item in ipairs(self) do
+			if item == child then
+				return index
+			end
+		end
+		return nil
+	end
+	---Get index of element or string
+	---@param child element|string child of you will find index
+	---@return number|nil index index of input child
+	function element:indexOf(child)
+		if (not isElement(child)) and type(child) ~= "string" then
+			error(("[element.indexOf] remove method arg 1 'child' must be a element or number, but got %s"):format(type(child)))
+		end
+		return indexOf(self,child)
+	end
+	---Check element is empty
+	---@return boolean isEmpty is this element empty
+	function element:isEmpty()
+		return #self == 0
+	end
+
+	local function removeIndex(self,index)
+		local child = self[index]
+		if not child then
+			return nil
+		end
+		child.__parent = nil
+		child.__pindex = nil
+		local removed = tremove(self,index)
+		if not removed then return nil end
+
+		-- update children's pindex
+		for i = index,#self do
+			local item = self[i]
+			if isElement(item) then
+				item.__pindex = i
+			end
+		end
+		return removed
+	end
 	---Remove item with index
-	---@param index number index of item that you want to remove
+	---@param index number index of item that you want to remove (ZERO BASED INDEX!!)
 	---@return string|nil|element removed removed item
 	function element:removeIndex(index)
-		local child = self[index]
-		if not child then
-			error("[element.remove] couldn't remove child because anything match index with '%s' not found from Item")
+		if type(index) ~= "number" and index ~= nil then
+			error(("[element.removeIndex] removeIndex method arg 1 'index' must be a number or nil, but got %s"):format(type(index)))
 		end
-		child.__parent = nil
-		child.__pindex = nil
-		return tremove(self,index)
+		return removeIndex(self,index or #self)
+	end
+
+	---Destroy it selfs and remove it self from parent
+	function element:destroy()
+		for _,child in ipairs(self) do
+			if isElement(child) then
+				child:destroy()
+			end
+		end
+
+		local parent = self.__parent
+		if parent then
+			removeIndex(parent,self.__pindex)
+		end
+
+		self.__parent = nil
+		self.__pindex = nil
+		self.__disposed = true
+
+		setmetatable(self,nil)
 	end
 
 	---Remove item with index
-	---@param children element index of item that you want to remove
+	---@param child element|string index of item that you want to remove
 	---@return string|nil|element removed removed item
-	function element:remove(children)
-		local child = self[index]
-		if not child then
-			error("[element.remove] couldn't remove child because anything match index with '%s' not found from Item")
+	function element:remove(child)
+		if (not isElement(child)) and type(child) ~= "string" then
+			error(("[element.remove] remove method arg 1 'child' must be a element or string, but got %s"):format(type(child)))
 		end
-		child.__parent = nil
-		child.__pindex = nil
-		return tremove(self,index)
+		local index = self:indexOf(child)
+		if not index then
+			error(("[element.remove] child %s is not exist on %s"):format(tostring(child),tostring(self)))
+		end
+		return self:removeIndex(index)
+	end
+
+	local function insert(self,child,index)
+		if index then
+			tinsert(self,index,child)
+		else
+			tinsert(self,child)
+		end
+		if isElement(child) then
+			local parent = child.__parent
+			if parent then
+				tremove(parent,child.__pindex)
+			end
+			child.__pindex = index or #self
+			child.__parent = self
+		end
+		if index then
+			for i=index+1,#self do
+				local item = self[i]
+				if isElement(item) then
+					item.__pindex = i
+				end
+			end
+		end
+	end
+	---Insert child at index
+	---@param child element|string item to insert
+	---@param index number|nil position of item
+	function element:insert(child,index)
+		local childIsElement = isElement(child)
+		if (not childIsElement) and type(child) ~= "string" then
+			error(("[element.insert] insert method arg 1 'child' must be a element or string, but got %s"):format(type(child)))
+		elseif type(index) ~= "number" and index ~= nil then
+			error(("[element.insert] insert method arg 2 'index' must be a number or nil, but got %s"):format(type(index)))
+		end
+		return insert(self,child,index)
+	end
+
+	---Replace child at index
+	---@param child element|string item to replace by
+	---@return string|element|nil replacedItem replaced item
+	function element:replace(child,index)
+		local childIsElement = isElement(child)
+		if (not childIsElement) and type(child) ~= "string" then
+			error(("[element.replace] replace method arg 1 'child' must be a element or string, but got %s"):format(type(child)))
+		elseif type(index) ~= "number" then
+			error(("[element.replace] replace method arg 2 'index' must be a number, but got %s"):format(type(index)))
+		end
+		local item = self[index]
+		self[index] = child
+		if childIsElement then
+			local parent = child.__parent
+			if parent then
+				tremove(parent,child.__pindex)
+			end
+			child.__pindex = index
+			child.__parent = self
+		end
+		if isElement(item) then
+			item.__parent = nil
+			item.__pindex = nil
+		end
+		return item
+	end
+
+	---js style methods
+	---Add child at end of children list
+	---@param child element|string item to add
+	---@return number position position of new child
+	function element:push(child)
+		if (not isElement(child)) and type(child) ~= "string" then
+			error(("[element.push] push method arg 1 'child' must be a element or string, but got %s"):format(type(child)))
+		end
+		insert(self,child)
+		return #self
+	end
+	---js style methods
+	---Remove child which positioned at end of children list
+	---@return element|string|nil child remove child
+	---@return number|nil position position of removed child
+	function element:pop()
+		local index = #self
+		local removed = removeIndex(self,index)
+		if removed then
+			return removed,index
+		end
+		return nil,nil
+	end
+	---js style methods
+	---Remove child which positioned at start of children list
+	---@return element|string|nil child remove child
+	function element:shift()
+		return removeIndex(self,1)
+	end
+	---js style methods
+	---Add child at start of children list
+	---@param child element|string item to add
+	function element:unshift(child)
+		if (not isElement(child)) and type(child) ~= "string" then
+			error(("[element.unshift] unshift method arg 1 'child' must be a element or string, but got %s"):format(type(child)))
+		end
+		insert(self,child,1)
+	end
+	---Remove one or many items. replace is not allowed
+	---@param start number start index of removing (ZERO BASED INDEX!!)
+	---@param length number start index of removing (ZERO BASED INDEX!!)
+	---@return nil|table removed removed item
+	function element:splice(start,length)
+		local items = {}
+		for i=1,length do
+			tinsert(items,self:removeIndex(start))
+		end
+		return items
 	end
 end
 
@@ -1381,6 +1633,8 @@ end
 ---------------------------------------------
 local root = setmetatable({},element) do
 	root.__index = root
+	root.__ROOT = true
+	root.tag = "root"
 
 	function root.new(children)
 		local this = children or {}
@@ -1392,8 +1646,13 @@ end
 ---------------------------------------------
 --         Module: parserBase
 ---------------------------------------------
+-- need hooks
 local parserBase = {} do
 	local opRegex = {}
+
+	-- utf8 char
+	local OP_UTFCHAR = #opRegex+1
+	tinsert(opRegex,"^("..utility.utf8OnlyRegex..")")
 
 	local OP_WHITESPACE = #opRegex+1
 	tinsert(opRegex,"^[ \n\t]+")
@@ -1403,37 +1662,59 @@ local parserBase = {} do
 	tinsert(opRegex,"^<!%-")
 	local OP_COMMENT_END = #opRegex+1
 	tinsert(opRegex,"^%-%->")
+	local REGEX_COMMENT_END = opRegex[OP_COMMENT_END]
 
-	local OP_SPLIT = #opRegex+1
-	tinsert(opRegex,"([ \t\n]+)")
-	
 	-- Doctype
 	-- e) DOCTYPE
 	-- TODO: DTD ENTITY and ELEMENT
-	local OP_DTD = "<!DOCTYPE" -- closes with >
+	local OP_DTD = #opRegex+1
+	tinsert(opRegex,"^<!DOCTYPE") -- closes with >
 
 	-- CDATA
-	local OP_CDATA_START = "<![CDATA["
-	local OP_CDATA_END = "]]>"
+	local OP_CDATA_START = #opRegex+1
+	tinsert(opRegex,"^<![CDATA[")
+	local OP_CDATA_END = #opRegex+1
+	tinsert(opRegex,"^]]>")
 
-	local OP_OPEN = "<"
-	local OP_CLOSE = "</"
-	local OP_
+	-- tag
+	local OP_OPEN = #opRegex+1
+	tinsert(opRegex,"^<([!/]?)")
+	local OP_CLOSE = #opRegex+1
+	tinsert(opRegex,"^([!/]?)>")
+	
+	-- char
+	local OP_STRING = #opRegex+1
+	tinsert(opRegex,"^(.+)")
+
+	local parseString = utility.parseString
+
+	function parserBase:parseTag()
+
+	end
 
 	function parserBase:parseDTD()
 
 	end
 
-	function parserBase:parseString()
+	function parserBase:parseCDATA()
 
 	end
 
 	function parserBase:parseXml(str)
+		local contentRoot = {}
 		while true do
 
 		end
-
+		return root.new(contentRoot)
 	end
+
+	function parserBase.createNewParser(options)
+		local this = {}
+		if options then
+			this.emptyTags = options.emptyTags
+		end
+	end
+
 end
 
 ---------------------------------------------
@@ -1445,264 +1726,18 @@ end
 --          Module: htmlParser
 ---------------------------------------------
 -- escape <br> or some empty tags
+-- <pre> can hold spaces/ \n
+-- \n -> space
 
-local item = {}
----Remove item with value (find and remove)
----@param value string|xmlItem item to remove
----@return boolean passed
-function item:remove(value)
-	local pass,ty = isItem(value)
-	if not (pass or ty == "string") then
-		error(("[item.removeValue] removeValue method arg 1 'value' must be an item object or a string, but got %s"):format(type(value)))
-	end
-	for i,v in pairs(self) do
-		if v == value then
-			if ty ~= "string" then
-				value.__parent = nil
-				value.__pindex = nil
-			end
-			tremove(self, i)
-			return true
-		end
-	end
-	return false
-end
-
----Add new item
----@param index number index of new item
----@param value string|xmlItem item to add
-function item:insert(index,value)
-	local pass,ty = isItem(value)
-	if not (pass or ty == "string") then
-		error(("[item.insert] insert method arg 2 'value' must be an item object or a string, but got %s"):format(type(value)))
-	end
-	tinsert(self,index,value)
-	if ty ~= "string" then
-		value.__parent = self
-		value.__pindex = index
-	end
-end
-
----Append new item
----@param value string|xmlItem new item to append
----@return number index where this item was added
-function item:append(value)
-	local pass,ty = isItem(value)
-	if not (pass or ty == "string") then
-		error(("[item.append] append method arg 1 'value' must be an item object or a string, but got %s"):format(type(value)))
-	end
-	tinsert(self,value)
-	if ty ~= "string" then
-		value.__parent = self
-		value.__pindex = #self
-	end
-	return #self
-end
-
----Prepend new item
----@param value string|xmlItem new item to prepend
-function item:prepend(value)
-	local pass,ty = isItem(value)
-	if not (pass or ty == "string") then
-		error(("[item.prepend] prepend method arg 1 'value' must be an item object or a string, but got %s"):format(type(value)))
-	end
-	if ty ~= "string" then
-		value.__parent = self
-		value.__pindex = 1
-	end
-	tinsert(self,1,value)
-end
-
---[[!autoDoc!
-@define class:item
-	function item:getParent()
-		i: get parent of item
-		return: item/nil
-!autoDoc!]]
----get parent of this item
----@return xmlItem|nil
-function item:getParent()
-	return self.__parent
-end
-
---[[!autoDoc!
-@define class:item
-	function item:getIndex()
-		i: get index of item from parent item
-		return: int/nil
-!autoDoc!]]
----get index in parent object
----@return number index
-function item:getIndex()
-	return self.__pindex
-end
-
---[[!autoDoc!
-@define class:item
-	function item:destroy()
-		i: destroy it self and remove from parent item (if is exist)
-!autoDoc!]]
----destroy it self and remove from parent item (if is exist)
-function item:destroy()
-	local p = self.__parent
-	if p then
-		p:removeValue(self)
-	end
-
-	self.__parent = nil
-	self.__pindex = nil
-
-	setmetatable(self,nil)
-end
-
---[[!autoDoc!
-@define calss:item
-	i: make new handler of xml item
-	string item.tag
-		i: tag of itself, it must be string
-	table/nil item.option
-		i: option of itself, you can make this property to empty with nil
-	string/calss:item item[n]
-		i: child object, you can modify with table lib and methods of class:item
-	function item.new(tag,option,t)
-		i: make new item
-		arg1 string tag: tag of new item, it means <tag></tag>
-		arg2 table/nil option: option of new item, it means <a option></a>
-		arg3 table/nil t: include child items, you can make empty this
-		return: class:item
-!autoDoc!]]
----make new handler of xml item
----@param tag string tag of new item, it means <tag></tag>
----@param option table|nil of itself, you can make this property to empty with nil
----@param t table|nil include child items, you can make empty this
----@return xmlItem
-function item.new(tag,option,t)
-	t = (t == nil and {}) or (type(t) == "table" and t) or {}
-	if type(tag) ~= "string" then
-		error(("[item.] new function arg 1 'tag' must be a string, but got %s"):format(type(tag)))
-	elseif option ~= nil and type(option) ~= "table" then
-		error(("[item.] new function arg 2 'option' must be a nil or a table, but got %s"):format(type(option)))
-	end
-
-	t.tag = tag
-	t.option = option
-
-	t.__pindex = nil
-	t.__parent = nil
-
-	setmetatable(t,item)
-
-	return t
-end
-module.item = item
-
--- <a option1="test" option2="test2"></a>
--- => {option1 = "test", option2 = "test2"}
-local optionFind = "\32-([%w-_]+)\32-="
-local function strToOption(str)
-	local option = {};
-	while true do
-		local nameStart,nameEnd,name = sfind(str,optionFind)
-		if not nameStart then
-			return option;
-		end
-		local qtStart,_ = sfind(str,"\"",nameEnd+1)
-		local qtEnd,_ = sfind(str,"\"",qtStart+1)
-		option[name] = toLuaStr(ssub(str,qtStart+1,qtEnd-1))
-		str = ssub(str,qtEnd+1,-1)
-	end
-	return option
-end
-module.strToOption = strToOption
-
--- {option1 = "test", option2 = "test2"}
--- => <a option1="test" option2="test2"></a>
-local optionFormat = '%s%s="%s" '
-local function optionToStr(option)
-	local str = ""
-	if not option then
-		return str
-	end
-	for i,v in pairs(option) do
-		str = optionFormat:format(str,i,toXmlStr(v))
-	end
-	return ssub(str,1,-2)
-end
-module.optionToStr = optionToStr
-
-local holderTag = "myXML_Main"
-local tagFind = "<([%/%?!]?)[\32\t\n\r]-([%w:%-_]+)(.-)([%/%?!]?)>"
-function module.xmlToItem(xml)
-	local main = item.new(holderTag)
-	local stack = {}
-	local now = main
-	while true do
-		local posStart,posEnd,prefix,tag,option,suffix = sfind(xml,tagFind)
-		if posStart == nil then
-			break
-		end
-		option = strToOption(option)
-
-		-- append string
-		local str = ssub(xml,1,posStart-1)
-		if sfind(str,"[^\32\n]") then
-			now:append(str)
-		end
-
-		if suffix and suffix ~= "" then -- self start, self end
-			now:append(item.new(tag,option))
-		elseif prefix and prefix ~= "" then -- end last tag
-			if now.tag ~= tag then
-				error(("[xmlToItem.] start tag and end tag is not match! startTag: %s; endTag: %s;"):format(now.tag,tag))
-			end
-			tremove(stack)
-			now = stack[#stack] or main
-		else
-			local this = item.new(tag,option)
-			now:append(this)
-			now = this
-			tinsert(stack,this)
-		end
-
-		xml = string.sub(xml,posEnd+1,-1)
-	end
-	setmetatable(main,nil)
-	main.tag = nil
-	main.option = nil
-	return main
-end
-
-local function itemToXml(thing)
-	local pass,ty = isItem(thing)
-	if not pass then
-		if ty == "table" then
-			local str = {}
-			for _,v in ipairs(thing) do
-				tinsert(str,itemToXml(v))
-			end
-			return tconcat(str," ")
-		end
-		return thing
-	end
-	local optStr = optionToStr(thing.option)
-	local tag = thing.tag
-	if #thing == 0 then
-		return ("<%s%s%s/>"):format(tag,optStr == "" and "" or "\32",optStr)
-	end
-	local str = ("<%s%s%s>%%s</%s>"):format(tag,optStr == "" and "" or "\32",optStr,tag)
-	local child = ""
-	for i,v in ipairs(thing) do
-		child = child .. itemToXml(v)
-	end
-	return str:format(child)
-end
-
-function module.itemToXml(nitem)
-	local pass,ty = isItem(nitem)
-	if not (pass or ty == "table") then
-		error(("[itemToXml.] arg 1 'nitem' must be a table or an item, but got %s"):format(ty))
-	end
-	return itemToXml(nitem)
-end
-
-return module
+return {
+	root = root;
+	element = element;
+	tokenList = tokenList;
+	selectorParser = selectorParser;
+	utility = utility;
+	querySelector = querySelector;
+	classNameParser = classNameParser;
+	classList = classList;
+	collection = collection;
+	parserBase = parserBase;
+}
