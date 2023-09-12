@@ -1662,7 +1662,7 @@ local parserBase = {} do
 	tinsert(opRegex,"^<!%-")
 	local OP_COMMENT_END = #opRegex+1
 	tinsert(opRegex,"^%-%->")
-	local REGEX_COMMENT_END = opRegex[OP_COMMENT_END]
+	local REGEX_COMMENT_END = "%-%->"
 
 	-- Doctype
 	-- e) DOCTYPE
@@ -1697,6 +1697,10 @@ local parserBase = {} do
 	end
 
 	function parserBase:parseCDATA()
+
+	end
+
+	function parserBase:parseComment()
 
 	end
 
