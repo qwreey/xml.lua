@@ -1678,7 +1678,7 @@ local parserBase = {} do
 
 	-- tag
 	local OP_OPEN = #opRegex+1
-	tinsert(opRegex,"^<([!/]?)")
+	tinsert(opRegex,"^<([!/]?)[\32\t\n\r]*([%w:%-_]*)")
 	local OP_CLOSE = #opRegex+1
 	tinsert(opRegex,"^([!/]?)>")
 	
