@@ -1680,7 +1680,7 @@ local parserBase = {} do
 	local OP_OPEN = #opRegex+1
 	tinsert(opRegex,"^<([!/]?)[\32\t\n\r]*([%w:%-_]*)")
 	local OP_CLOSE = #opRegex+1
-	tinsert(opRegex,"^([!/]?)>")
+	tinsert(opRegex,"^[\32\t\n\r]*([!/]?)>")
 	
 	-- char
 	local OP_STRING = #opRegex+1
