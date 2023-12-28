@@ -1,9 +1,14 @@
-return {
-  name = "luaiod/myXml.lua",
-  version = "2.1.0",
-  dependencies = {},
-  license = "MIT",
-  homepage = "https://github.com/qwreey75/myXml.lua",
-  description = "",
-  tags = {},
-}
+  return {
+    name = "qwreey/xml",
+    version = "0.0.1",
+    description = "XML and css like queryselector parser/builder. wip",
+    tags = { "lua" },
+    license = "MIT",
+    author = { name = "qwreey", email = "me@qwreey.moe" },
+    homepage = "https://github.com/qwreey/xml.lua",
+    dependencies = {},
+    files = {
+      "init.lua",
+    }
+  }
+  
